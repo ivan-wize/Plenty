@@ -2,7 +2,7 @@
 //  PrivacyAndDataSection.swift
 //  Plenty
 //
-//  Created by Ivan Wize on 4/24/26.
+//  Created by Ivan Wize on 4/26/26.
 //
 
 import Foundation
