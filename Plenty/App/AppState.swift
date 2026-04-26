@@ -4,16 +4,10 @@
 //
 //  Target path: Plenty/App/AppState.swift
 //
-//  Phase 1 baseline: selectedTab, install date.
-//  Phase 5 update: pendingAddSheet for cross-screen Add coordination.
-//
-//  Pattern: any view (HomeTab setup checklist, AccountsTab account row,
-//  glance section, etc.) sets `appState.pendingAddSheet = .income` to
-//  request a sheet. RootView observes and presents the corresponding
-//  view. The sheet dismisses by clearing the binding back to nil.
-//
-//  This avoids the alternative of passing sheet bindings down through
-//  every parent → child relationship that needs to trigger an Add.
+//  Phase 1: selectedTab, install date.
+//  Phase 5: pendingAddSheet enum.
+//  Phase 6: isProUnlocked.
+//  Phase 10: + lastError for app-level error banner.
 //
 
 import Foundation
@@ -55,8 +49,6 @@ final class AppState {
 
     private static let installDateKey = "plenty.installDate"
 
-    /// First-launch date, persisted to UserDefaults. Used by RatingManager,
-    /// onboarding state checks, and "first N days" features.
     var installDate: Date {
         if let stored = UserDefaults.standard.object(forKey: Self.installDateKey) as? Date {
             return stored
@@ -66,37 +58,33 @@ final class AppState {
         return now
     }
 
-    // MARK: - Pending Add Sheet (Phase 5)
+    // MARK: - Pro Access
 
-    /// What sheet, if any, RootView should present. Setting this from
-    /// any view triggers presentation. Cleared on dismiss. Identifiable
-    /// so it works as a `.sheet(item:)` binding.
+    var isProUnlocked: Bool = false
+
+    // MARK: - Last Error (Phase 10)
+
+    /// The most recent app-level error worth surfacing to the user.
+    /// Set by services (CloudKitSyncMonitor, save handlers, etc.)
+    /// when something went wrong that needs user awareness. Cleared
+    /// by ErrorBanner when the user dismisses it, or automatically
+    /// by services when the underlying issue resolves.
+    var lastError: PlentyError?
+
+    // MARK: - Pending Add Sheet
+
     var pendingAddSheet: PendingAddSheet?
 
     enum PendingAddSheet: Identifiable, Equatable, Sendable {
-
-        /// Quick-add expense.
         case expense
-
-        /// Manual income. `preferRecurring` controls whether the
-        /// "make recurring" toggle is on by default. Setup checklist
-        /// passes true; ad-hoc Add button passes false.
         case income(preferRecurring: Bool)
-
-        /// New bill or edit existing.
         case bill(existing: Transaction? = nil)
-
-        /// New account or edit existing.
         case account(existing: Account? = nil)
-
-        /// Quick balance update for the given account.
         case updateBalance(Account)
-
-        /// Confirm an expected-income entry that's arrived.
         case confirmIncome(Transaction)
-
-        /// Add a subscription manually.
         case subscription
+        case savingsGoal(existing: SavingsGoal? = nil)
+        case logContribution(SavingsGoal)
 
         var id: String {
             switch self {
@@ -107,6 +95,8 @@ final class AppState {
             case .updateBalance(let account):       return "balance.\(account.id.uuidString)"
             case .confirmIncome(let transaction):   return "confirm.\(transaction.id.uuidString)"
             case .subscription:                     return "subscription"
+            case .savingsGoal(let existing):        return "savingsGoal.\(existing?.id.uuidString ?? "new")"
+            case .logContribution(let goal):        return "contribution.\(goal.id.uuidString)"
             }
         }
     }
