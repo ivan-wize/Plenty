@@ -24,6 +24,7 @@ import os
 
 private let logger = Logger(subsystem: "com.plenty.app", category: "subscriptions")
 
+@Observable
 @MainActor
 final class SubscriptionReminderManager {
 

@@ -60,7 +60,7 @@ struct WatchBillsView: View {
                         .strikethrough(paidIDs.contains(bill.id))
                         .lineLimit(1)
 
-                    Text("Due \(bill.dueDay.ordinal)")
+                    Text("Due \(bill.dueDay.ordinalString)")
                         .font(.system(size: 9))
                         .foregroundStyle(.tertiary)
                 }

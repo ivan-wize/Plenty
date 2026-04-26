@@ -1,4 +1,5 @@
 # Xcode
+build/
 DerivedData/
 .build/
 *.pbxuser
@@ -12,6 +13,7 @@ DerivedData/
 xcuserdata/
 *.xccheckout
 *.xcscmblueprint
+*.xcresult/
 
 # Swift Package Manager
 .build/

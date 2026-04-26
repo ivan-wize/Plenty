@@ -48,7 +48,7 @@ struct PlentyApp: App {
                 .environment(syncMonitor)
                 .preferredColorScheme(currentAppearance.colorScheme)
                 .task {
-                    syncMonitor.startMonitoring()
+                    syncMonitor.start()
 
                     // If CloudKit failed to initialize at container time,
                     // mark the monitor as disabled so the UI knows not to

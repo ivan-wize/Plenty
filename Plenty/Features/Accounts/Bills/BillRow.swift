@@ -62,7 +62,7 @@ struct BillRow: View {
         } label: {
             Image(systemName: bill.isPaid ? "checkmark.circle.fill" : "circle")
                 .font(.title3)
-                .foregroundStyle(bill.isPaid ? Theme.sage : .tertiary)
+                .foregroundStyle(bill.isPaid ? AnyShapeStyle(Theme.sage) : AnyShapeStyle(HierarchicalShapeStyle.tertiary))
                 .symbolRenderingMode(.hierarchical)
                 .frame(width: 28, height: 28)
                 .contentTransition(.symbolEffect(.replace))
@@ -104,7 +104,7 @@ struct BillRow: View {
         if daysUntil <= 7 {
             return "Due \(BillRow.weekdayFormatter.string(from: dueDate))"
         }
-        return "Due \(bill.dueDay.ordinal)"
+        return "Due \(bill.dueDay.ordinalString)"
     }
 
     private var secondaryColor: Color {

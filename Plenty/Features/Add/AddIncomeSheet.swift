@@ -144,13 +144,13 @@ struct AddIncomeSheet: View {
             case .monthly:
                 Picker("Day of month", selection: $dayOfMonth) {
                     ForEach(1...28, id: \.self) { day in
-                        Text(day.ordinal).tag(day)
+                        Text(day.ordinalString).tag(day)
                     }
                 }
             case .semimonthly:
                 Picker("First day", selection: $dayOfMonth) {
                     ForEach(1...28, id: \.self) { day in
-                        Text(day.ordinal).tag(day)
+                        Text(day.ordinalString).tag(day)
                     }
                 }
             case .biweekly, .weekly:

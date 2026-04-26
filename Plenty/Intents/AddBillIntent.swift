@@ -77,7 +77,7 @@ struct AddBillIntent: AppIntent {
             return .result(dialog: "Plenty couldn't save the bill.")
         }
 
-        return .result(dialog: IntentDialog(stringLiteral: "Added \(trimmedName) for \(amountDecimal.spokenCurrency()) due the \(dueDay.ordinal) of each month."))
+        return .result(dialog: IntentDialog(stringLiteral: "Added \(trimmedName) for \(amountDecimal.spokenCurrency()) due the \(dueDay.ordinalString) of each month."))
     }
 }
 

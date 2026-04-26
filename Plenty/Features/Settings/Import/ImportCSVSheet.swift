@@ -51,7 +51,7 @@ struct ImportCSVSheet: View {
             handleFileSelection(result)
         }
         .onAppear {
-            if session.stage == .stagePicking {
+            if case .picking = session.stage {
                 showingFileImporter = true
             }
         }

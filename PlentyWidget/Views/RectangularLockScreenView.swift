@@ -80,7 +80,7 @@ struct RectangularLockScreenView: View {
         if let billName = entry.nextBillName,
            let amount = entry.nextBillAmount,
            let dueDay = entry.nextBillDueDay {
-            return "\(billName) \(amount.asPlainCurrency()) · \(dueDay.ordinal)"
+            return "\(billName) \(amount.asPlainCurrency()) · \(dueDay.ordinalString)"
         }
         if let burn = entry.sustainableDailyBurn, burn > 0 {
             return "~\(burn.asPlainCurrency())/day"

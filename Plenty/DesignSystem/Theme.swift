@@ -22,7 +22,10 @@
 //
 
 import SwiftUI
+
+#if canImport(UIKit) && !os(watchOS)
 import UIKit
+#endif
 
 // MARK: - Theme Namespace
 
@@ -33,39 +36,44 @@ enum Theme {
     /// The primary brand color. `#6B8E7F`. Used for the Add button, active
     /// tab indicator, positive currency amounts, chart primary lines, and
     /// occasional brand accents. Appears sparingly by design.
-    static let sage = Color(uiColor: UIColor(red: 0x6B / 255.0,
-                                             green: 0x8E / 255.0,
-                                             blue: 0x7F / 255.0,
-                                             alpha: 1.0))
+    static let sage = Color(red: 0x6B / 255.0,
+                            green: 0x8E / 255.0,
+                            blue: 0x7F / 255.0)
 
     /// Warning state, approaching-short. `#D4A656`. Reserved for state
     /// communication, never decorative.
-    static let amber = Color(uiColor: UIColor(red: 0xD4 / 255.0,
-                                              green: 0xA6 / 255.0,
-                                              blue: 0x56 / 255.0,
-                                              alpha: 1.0))
+    static let amber = Color(red: 0xD4 / 255.0,
+                             green: 0xA6 / 255.0,
+                             blue: 0x56 / 255.0)
 
     /// Negative state, short or over-budget. `#B55A4A`. Reserved for state
     /// communication, never decorative.
-    static let terracotta = Color(uiColor: UIColor(red: 0xB5 / 255.0,
-                                                   green: 0x5A / 255.0,
-                                                   blue: 0x4A / 255.0,
-                                                   alpha: 1.0))
+    static let terracotta = Color(red: 0xB5 / 255.0,
+                                  green: 0x5A / 255.0,
+                                  blue: 0x4A / 255.0)
 
     /// Warm off-white, the interior background in Light mode. `#FAF7F2`.
-    static let offWhite = Color(uiColor: UIColor(red: 0xFA / 255.0,
-                                                 green: 0xF7 / 255.0,
-                                                 blue: 0xF2 / 255.0,
-                                                 alpha: 1.0))
+    static let offWhite = Color(red: 0xFA / 255.0,
+                                green: 0xF7 / 255.0,
+                                blue: 0xF2 / 255.0)
 
     /// Warm charcoal, the interior background in Dark mode. `#1A1C1B`.
-    static let charcoal = Color(uiColor: UIColor(red: 0x1A / 255.0,
-                                                 green: 0x1C / 255.0,
-                                                 blue: 0x1B / 255.0,
-                                                 alpha: 1.0))
+    static let charcoal = Color(red: 0x1A / 255.0,
+                                green: 0x1C / 255.0,
+                                blue: 0x1B / 255.0)
 
     // MARK: Adaptive surfaces
 
+    #if os(watchOS)
+    // watchOS has no light mode; use dark-mode values directly.
+    static let background = charcoal
+    static let cardSurface = Color(red: 0x23 / 255.0,
+                                   green: 0x26 / 255.0,
+                                   blue: 0x25 / 255.0)
+    static let divider = Color(red: 0x2C / 255.0,
+                               green: 0x2F / 255.0,
+                               blue: 0x2E / 255.0)
+    #else
     /// The app's interior background. Off-white in Light, charcoal in Dark.
     /// Apply to the root of every screen inside the tab bar.
     static let background = Color(uiColor: UIColor { traits in
@@ -88,6 +96,7 @@ enum Theme {
             ? UIColor(red: 0x2C / 255.0, green: 0x2F / 255.0, blue: 0x2E / 255.0, alpha: 1.0)
             : UIColor(red: 0xE8 / 255.0, green: 0xE5 / 255.0, blue: 0xDE / 255.0, alpha: 1.0)
     })
+    #endif
 
     // MARK: Corner Radii
     //

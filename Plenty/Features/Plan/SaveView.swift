@@ -159,7 +159,7 @@ private struct GoalRow: View {
 
     private var progress: Double {
         guard goal.targetAmount > 0 else { return 0 }
-        return min(1, max(0, (goal.contributedAmount / goal.targetAmount as NSDecimalNumber).doubleValue))
+        return min(1, max(0, (goal.savedAmount / goal.targetAmount as NSDecimalNumber).doubleValue))
     }
 
     private var progressColor: Color {
@@ -186,8 +186,8 @@ private struct GoalRow: View {
                             }
                         }
 
-                        if let deadline = goal.deadline {
-                            Text("By \(deadline.formatted(date: .abbreviated, time: .omitted))")
+                        if let targetDate = goal.targetDate {
+                            Text("By \(targetDate.formatted(date: .abbreviated, time: .omitted))")
                                 .font(Typography.Support.footnote)
                                 .foregroundStyle(.secondary)
                         } else {

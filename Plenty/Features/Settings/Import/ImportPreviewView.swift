@@ -177,7 +177,7 @@ struct ImportPreviewView: View {
             HStack(spacing: 12) {
                 Image(systemName: candidate.include ? "checkmark.circle.fill" : "circle")
                     .font(.title3)
-                    .foregroundStyle(candidate.include ? Theme.sage : .tertiary)
+                    .foregroundStyle(candidate.include ? AnyShapeStyle(Theme.sage) : AnyShapeStyle(HierarchicalShapeStyle.tertiary))
                     .symbolRenderingMode(.hierarchical)
 
                 VStack(alignment: .leading, spacing: 2) {

@@ -127,7 +127,7 @@ struct BillEditorSheet: View {
         Section {
             Picker("Due day", selection: $dueDay) {
                 ForEach(1...28, id: \.self) { day in
-                    Text(day.ordinal).tag(day)
+                    Text(day.ordinalString).tag(day)
                 }
             }
         } footer: {

@@ -140,7 +140,7 @@ struct IncomeSourcesView: View {
     private func cadenceLine(for source: IncomeSource) -> String {
         switch source.frequency {
         case .monthly:
-            return "Monthly on the \((source.dayOfMonth ?? 1).ordinal)"
+            return "Monthly on the \((source.dayOfMonth ?? 1).ordinalString)"
         case .semimonthly:
             return "Twice monthly"
         case .biweekly:

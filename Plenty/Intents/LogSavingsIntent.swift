@@ -60,12 +60,12 @@ struct LogSavingsIntent: AppIntent {
         let goal = matches[0]
         let amountDecimal = Decimal(amount)
 
-        let tx = Transaction.savingsContribution(
+        let tx = Transaction(
+            kind: .transfer,
             name: goal.name,
             amount: amountDecimal,
             date: .now,
-            goal: goal,
-            note: nil
+            savingsGoal: goal
         )
         context.insert(tx)
 
@@ -76,7 +76,7 @@ struct LogSavingsIntent: AppIntent {
         }
 
         let progressLine: String
-        let newTotal = goal.contributedAmount
+        let newTotal = goal.savedAmount
         if newTotal >= goal.targetAmount {
             progressLine = "Goal reached."
         } else {
