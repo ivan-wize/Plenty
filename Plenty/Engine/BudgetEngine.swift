@@ -27,13 +27,10 @@
 //    • No statementBalance on a card   → no subtraction for that card
 //    • No nextIncomeDate               → all statements due this month subtract
 //    • No savingsGoals                 → no savings subtraction
+//    • Goal with no monthlyContribution → contributes 0 to planned savings
 //
-//  Notes on what's deliberately NOT subtracted:
-//    • Expenses already posted (they already reduced the account balance)
-//    • Paid bills (same reason)
-//    • Loan principal (tracked as net worth, not a this-month commitment,
-//      unless the user adds a Loan Payment bill)
-//    • Full credit card balance (tracked as debt, not a this-month commitment)
+//  Replaces the prior BudgetEngine. One change: the planned-savings
+//  sum now treats `monthlyContribution` as optional, defaulting to 0.
 //
 
 import Foundation
@@ -85,7 +82,7 @@ enum BudgetEngine {
         // ---------- Savings ----------
         let activeGoals = savingsGoals.filter { $0.isActive && !$0.isCompleted }
         let plannedSavings = roundCents(
-            activeGoals.reduce(Decimal.zero) { $0 + $1.monthlyContribution }
+            activeGoals.reduce(Decimal.zero) { $0 + ($1.monthlyContribution ?? 0) }
         )
         let actualSavings = TransactionProjections.actualSavingsThisMonth(
             transactions, month: month, year: year

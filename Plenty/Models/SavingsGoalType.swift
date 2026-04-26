@@ -5,7 +5,13 @@
 //  Target path: Plenty/Models/SavingsGoalType.swift
 //
 //  Goal type presets with smart default targets and suggested emojis.
-//  Port from Left unchanged.
+//
+//  Replaces the prior SavingsGoalType. Two changes from the original:
+//    • `.custom` is renamed to `.general` to match what the views and
+//      the SavingsGoal default already expect. Since this is a fresh
+//      app with no production data (PRD §1), the rawValue change is
+//      harmless.
+//    • Added `displayName`, `emoji`, and helper methods unchanged.
 //
 
 import Foundation
@@ -16,7 +22,7 @@ enum SavingsGoalType: String, Codable, CaseIterable, Identifiable, Sendable {
     case downPayment
     case newCar
     case payOffDebt
-    case custom
+    case general
 
     var id: String { rawValue }
 
@@ -27,7 +33,7 @@ enum SavingsGoalType: String, Codable, CaseIterable, Identifiable, Sendable {
         case .downPayment:   return "Down Payment"
         case .newCar:        return "New Car"
         case .payOffDebt:    return "Pay Off Debt"
-        case .custom:        return "Custom"
+        case .general:       return "General"
         }
     }
 
@@ -38,7 +44,7 @@ enum SavingsGoalType: String, Codable, CaseIterable, Identifiable, Sendable {
         case .downPayment:   return "🏠"
         case .newCar:        return "🚗"
         case .payOffDebt:    return "💳"
-        case .custom:        return "🎯"
+        case .general:       return "🎯"
         }
     }
 
@@ -49,7 +55,7 @@ enum SavingsGoalType: String, Codable, CaseIterable, Identifiable, Sendable {
         case .downPayment:   return "house.fill"
         case .newCar:        return "car.fill"
         case .payOffDebt:    return "creditcard.fill"
-        case .custom:        return "star.fill"
+        case .general:       return "star.fill"
         }
     }
 
@@ -61,7 +67,7 @@ enum SavingsGoalType: String, Codable, CaseIterable, Identifiable, Sendable {
         case .downPayment:   return 60_000     // 20% of $300K median home
         case .newCar:        return 10_000
         case .payOffDebt:    return nil        // Sum of tracked debt
-        case .custom:        return nil
+        case .general:       return nil
         }
     }
 
@@ -72,7 +78,7 @@ enum SavingsGoalType: String, Codable, CaseIterable, Identifiable, Sendable {
         case .downPayment:   return "20% of median home price"
         case .newCar:        return nil
         case .payOffDebt:    return "Sum of your tracked debt"
-        case .custom:        return nil
+        case .general:       return nil
         }
     }
 

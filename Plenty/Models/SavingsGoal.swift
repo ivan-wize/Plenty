@@ -5,12 +5,24 @@
 //  Target path: Plenty/Models/SavingsGoal.swift
 //
 //  A savings goal. Contributions are Transaction records of kind
-//  .transfer that reference this goal; savedAmount aggregates across
-//  those linked transfers (plus an optional legacy field for any
-//  migrated data).
+//  .transfer that reference this goal; contributedAmount aggregates
+//  across those linked transfers (plus an optional legacy field for
+//  any migrated data).
 //
-//  Port from Left with one change: `isShared: Bool` added for V1.1
-//  sharing hook. Dormant in V1.0.
+//  This file replaces the prior SavingsGoal to align the storage with
+//  what the views were already calling for:
+//
+//    • `deadline: Date?`             (was `targetDate`)
+//    • `monthlyContribution: Decimal?` (was non-optional `Decimal`)
+//    • `note: String?`               (was missing)
+//    • `contributedAmount`           (alias for `savedAmount`)
+//
+//  The init signature reflects what AddSavingsGoalSheet was already
+//  constructing. Existing CloudKit data has no users yet (PRD
+//  Section 1: "no existing users and no production data to migrate"),
+//  so the rename of `targetDate` → `deadline` is safe.
+//
+//  Port from Left with the V1.1 sharing hook (`isShared`) preserved.
 //
 
 import Foundation
@@ -26,16 +38,27 @@ final class SavingsGoal {
     // MARK: - Core
 
     var name: String = ""
-    var goalTypeRaw: String = SavingsGoalType.custom.rawValue
+    var goalTypeRaw: String = SavingsGoalType.general.rawValue
     var targetAmount: Decimal = 0
-    var monthlyContribution: Decimal = 0
 
-    /// Legacy saved amount, preserved for migrated data. New contributions
-    /// flow through linked Transaction records.
+    /// Optional monthly savings target. When set and > 0, the budget
+    /// engine subtracts the unfunded portion from the user's spendable
+    /// number so they don't accidentally spend money they've committed
+    /// to save. nil means "no monthly target" — the goal is real but
+    /// the user hasn't paced it.
+    var monthlyContribution: Decimal?
+
+    /// Legacy saved amount, preserved for migrated data. New
+    /// contributions flow through linked Transaction records.
     var savedAmountLegacy: Decimal = 0
 
-    var targetDate: Date?
+    /// Optional target date by which the user wants to hit the goal.
+    /// Plenty does not enforce or alarm on this date — it's display
+    /// only and feeds the projected-completion comparison.
+    var deadline: Date?
+
     var emoji: String = "🎯"
+    var note: String?
 
     // MARK: - State
 
@@ -62,18 +85,20 @@ final class SavingsGoal {
 
     init(
         name: String,
-        goalType: SavingsGoalType = .custom,
         targetAmount: Decimal,
-        monthlyContribution: Decimal,
-        targetDate: Date? = nil,
+        goalType: SavingsGoalType = .general,
+        deadline: Date? = nil,
+        monthlyContribution: Decimal? = nil,
+        note: String? = nil,
         emoji: String = "🎯"
     ) {
         self.id = UUID()
         self.name = name
-        self.goalTypeRaw = goalType.rawValue
         self.targetAmount = targetAmount
+        self.goalTypeRaw = goalType.rawValue
+        self.deadline = deadline
         self.monthlyContribution = monthlyContribution
-        self.targetDate = targetDate
+        self.note = note
         self.emoji = emoji
         self.createdAt = .now
         self.updatedAt = .now
@@ -82,7 +107,7 @@ final class SavingsGoal {
     // MARK: - Computed
 
     var goalType: SavingsGoalType {
-        get { SavingsGoalType(rawValue: goalTypeRaw) ?? .custom }
+        get { SavingsGoalType(rawValue: goalTypeRaw) ?? .general }
         set { goalTypeRaw = newValue.rawValue }
     }
 
@@ -91,6 +116,11 @@ final class SavingsGoal {
         let fromContributions = (contributions ?? []).reduce(Decimal.zero) { $0 + $1.amount }
         return savedAmountLegacy + fromContributions
     }
+
+    /// Synonym for savedAmount used by the contribution UI for clarity
+    /// ("contributed $X of $Y" reads better than "saved $X of $Y" when
+    /// the user is in the middle of logging a contribution).
+    var contributedAmount: Decimal { savedAmount }
 
     var progress: Double {
         guard targetAmount > 0 else { return 0 }
@@ -103,10 +133,12 @@ final class SavingsGoal {
         max(0, targetAmount - savedAmount)
     }
 
+    /// Number of months to reach the goal at the current monthly
+    /// contribution rate. Nil if no monthly target is set or already done.
     var estimatedMonthsLeft: Int? {
-        guard monthlyContribution > 0, remaining > 0 else { return nil }
+        guard let monthly = monthlyContribution, monthly > 0, remaining > 0 else { return nil }
         let months = NSDecimalNumber(decimal: remaining)
-            .dividing(by: NSDecimalNumber(decimal: monthlyContribution))
+            .dividing(by: NSDecimalNumber(decimal: monthly))
             .doubleValue
         return Int(ceil(months))
     }
@@ -118,10 +150,9 @@ final class SavingsGoal {
 
     // MARK: - Mutators
 
+    /// Legacy direct-credit method. Kept for tests and migrations only.
+    /// Real contributions go through ModelContext.insert of a Transaction.
     func logContribution(amount: Decimal) {
-        // Contributions flow through Transaction.transfer; this legacy
-        // helper remains for tests and migrations. Real contributions
-        // go through ModelContext insert of a Transaction.
         savedAmountLegacy += amount
         updatedAt = .now
         if savedAmount >= targetAmount && targetAmount > 0 {

@@ -16,8 +16,10 @@
 //  Amount is always stored as positive magnitude; sign derives from kind
 //  at read time.
 //
-//  Port from Left with `isShared: Bool` added for the V1.1 sharing hook.
-//  Dormant in V1.0.
+//  Replaces the prior Transaction. One added factory:
+//    • `savingsContribution(name:amount:date:goal:note:)` for the
+//      Log Contribution flow, which doesn't ask for a source account
+//      (the user just wants to credit a goal).
 //
 
 import Foundation
@@ -372,6 +374,29 @@ final class Transaction {
             destinationAccount: destination,
             savingsGoal: savingsGoal
         )
+    }
+
+    /// A savings goal contribution. Recorded as a .transfer without an
+    /// explicit source account — the user is just crediting a goal,
+    /// without us needing to know which checking account the money came
+    /// from. Aggregated into `goal.savedAmount` via the relationship.
+    static func savingsContribution(
+        name: String,
+        amount: Decimal,
+        date: Date = .now,
+        goal: SavingsGoal,
+        note: String? = nil
+    ) -> Transaction {
+        let tx = Transaction(
+            kind: .transfer,
+            name: name,
+            amount: amount,
+            date: date,
+            category: .savingsTransfer,
+            note: note,
+            savingsGoal: goal
+        )
+        return tx
     }
 
     private static func inferTransferCategory(from source: Account, to destination: Account) -> TransactionCategory {

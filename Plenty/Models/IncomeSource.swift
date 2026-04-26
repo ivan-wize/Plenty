@@ -12,7 +12,11 @@
 //  records of kind .income with status .expected for the current month.
 //  Users confirm or skip each entry as paychecks actually arrive.
 //
-//  Port from Left unchanged.
+//  Replaces the prior IncomeSource. One change: `init` now takes
+//  `IncomeSource.Frequency` (the cohesive type) instead of
+//  `RecurringRule.Frequency`. AddIncomeSheet was already passing
+//  `IncomeSource.Frequency`; the prior signature was a hidden type
+//  mismatch.
 //
 
 import Foundation
@@ -31,8 +35,10 @@ final class IncomeSource {
     /// Expected amount per occurrence.
     var expectedAmount: Decimal = 0
 
-    /// Recurrence policy. Stored as JSON string for CloudKit.
-    var frequencyRaw: String = RecurringRule.Frequency.biweekly.rawValue
+    /// Recurrence policy. Stored as a raw string for CloudKit.
+    /// Always one of the four IncomeSource.Frequency raw values:
+    /// "weekly" | "biweekly" | "semimonthly" | "monthly".
+    var frequencyRaw: String = IncomeSource.Frequency.biweekly.rawValue
 
     /// Day of the month for monthly/semimonthly sources. 1-31.
     /// For monthly: the day of the month. For semimonthly: the first day.
@@ -61,7 +67,7 @@ final class IncomeSource {
     init(
         name: String,
         expectedAmount: Decimal,
-        frequency: RecurringRule.Frequency,
+        frequency: Frequency,
         dayOfMonth: Int = 1,
         secondDayOfMonth: Int? = nil,
         weekday: Int = 5,
@@ -81,8 +87,11 @@ final class IncomeSource {
         self.updatedAt = .now
     }
 
-    // MARK: - Computed
+    // MARK: - Frequency
 
+    /// IncomeSource only supports the four sub-monthly cadences. Quarterly
+    /// and annually are RecurringRule features that don't apply to
+    /// paychecks in practice.
     enum Frequency: String, Codable, CaseIterable, Identifiable, Sendable {
         case weekly
         case biweekly
@@ -110,16 +119,10 @@ final class IncomeSource {
         }
     }
 
+    // MARK: - Computed
+
     var frequency: Frequency {
-        get {
-            switch RecurringRule.Frequency(rawValue: frequencyRaw) ?? .biweekly {
-            case .weekly:      return .weekly
-            case .biweekly:    return .biweekly
-            case .semimonthly: return .semimonthly
-            case .monthly:     return .monthly
-            default:           return .biweekly
-            }
-        }
-        set { frequencyRaw = newValue.asRecurringRuleFrequency.rawValue }
+        get { Frequency(rawValue: frequencyRaw) ?? .biweekly }
+        set { frequencyRaw = newValue.rawValue }
     }
 }

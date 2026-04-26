@@ -10,6 +10,10 @@
 //       contribution; menu to edit or delete.
 //    2. Debt Payoff — the avalanche vs snowball comparison card.
 //
+//  Replaces the prior SaveView. One change: `goal.targetDate` is now
+//  `goal.deadline` (the SavingsGoal model property was renamed for
+//  consistency with the editor sheet).
+//
 
 import SwiftUI
 import SwiftData
@@ -186,8 +190,8 @@ private struct GoalRow: View {
                             }
                         }
 
-                        if let targetDate = goal.targetDate {
-                            Text("By \(targetDate.formatted(date: .abbreviated, time: .omitted))")
+                        if let deadline = goal.deadline {
+                            Text("By \(deadline.formatted(date: .abbreviated, time: .omitted))")
                                 .font(Typography.Support.footnote)
                                 .foregroundStyle(.secondary)
                         } else {
