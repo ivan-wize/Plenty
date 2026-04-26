@@ -123,5 +123,5 @@ struct PlentyShortcutsProvider: AppShortcutsProvider {
         )
     }
 
-    static let shortcutTileColor = ShortcutTileColor.tealGreen
+    static let shortcutTileColor = ShortcutTileColor.grayGreen
 }
