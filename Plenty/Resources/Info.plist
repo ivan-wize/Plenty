@@ -1,8 +1,32 @@
-//
-//  Info.plist
-//  Plenty
-//
-//  Created by Ivan Wize on 4/24/26.
-//
-
-import Foundation
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSCameraUsageDescription</key>
+	<string>Plenty uses the camera to scan receipts so you can attach an image to expense entries.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Plenty needs access to your photo library to attach receipt images to expenses.</string>
+	<key>NSRemindersUsageDescription</key>
+	<string>Plenty creates reminders for tracked subscriptions so you can cancel before renewal.</string>
+	<key>NSSiriUsageDescription</key>
+	<string>Plenty uses Siri to add expenses, log income, and check your spendable amount.</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
+	</array>
+	<key>NSUbiquitousContainers</key>
+	<dict>
+		<key>iCloud.com.plenty.app</key>
+		<dict>
+			<key>NSUbiquitousContainerIsDocumentScopePublic</key>
+			<false/>
+			<key>NSUbiquitousContainerSupportedFolderLevels</key>
+			<string>None</string>
+			<key>NSUbiquitousContainerName</key>
+			<string>Plenty</string>
+		</dict>
+	</dict>
+</dict>
+</plist>
