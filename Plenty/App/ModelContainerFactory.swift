@@ -4,8 +4,9 @@
 //
 //  Target path: Plenty/App/ModelContainerFactory.swift
 //
-//  Creates the SwiftData ModelContainer for the main app, intents, and
-//  the watch. Three-tier fallback so the app always launches:
+//  Creates the SwiftData ModelContainer for the main app, intents, the
+//  watch, and the widget. Three-tier fallback so the app always
+//  launches:
 //
 //    1. CloudKit-backed persistent store         (primary)
 //    2. Local-only persistent store              (CloudKit init failed)
@@ -124,8 +125,8 @@ enum ModelContainerFactory {
 
     // MARK: - Intent / Extension Container
 
-    /// Container for App Intents, widgets, and other extensions that need
-    /// to read user data outside the main app process. Returns nil if
+    /// Container for App Intents and other extensions that need to
+    /// read user data outside the main app process. Returns nil if
     /// the container can't be created (intent should fail gracefully).
     @MainActor
     static func makeForIntent() -> ModelContainer? {
@@ -142,6 +143,36 @@ enum ModelContainerFactory {
             return try ModelContainer(for: schema, configurations: [configuration])
         } catch {
             logger.error("Intent container failed: \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    // MARK: - Widget Container
+
+    /// Container for the Plenty Widget extension. Same shape as the
+    /// intent container — read-mostly, optional return so the timeline
+    /// provider can render an "open the app" placeholder on failure
+    /// instead of misleading zeros.
+    ///
+    /// `allowsSave: true` because the widget runs IncomeEntryGenerator
+    /// which materializes expected paychecks for the current month
+    /// idempotently. Without saves, a widget viewed early in a month
+    /// before the user opens the app would miss those entries.
+    @MainActor
+    static func makeForWidget() -> ModelContainer? {
+        let schema = Schema(allModels)
+
+        let configuration = ModelConfiguration(
+            schema: schema,
+            isStoredInMemoryOnly: false,
+            allowsSave: true,
+            cloudKitDatabase: .automatic
+        )
+
+        do {
+            return try ModelContainer(for: schema, configurations: [configuration])
+        } catch {
+            logger.error("Widget container failed: \(error.localizedDescription)")
             return nil
         }
     }

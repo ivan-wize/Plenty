@@ -13,6 +13,10 @@
 //  consecutive failures (over ~5 minutes) is treated as a real outage
 //  worth surfacing.
 //
+//  All event handling stays on the MainActor. The notification streams
+//  are consumed from `Task { @MainActor }` so the @MainActor methods
+//  on this class can be called without `await`.
+//
 
 import Foundation
 import SwiftData
@@ -64,13 +68,19 @@ final class CloudKitSyncMonitor {
     func start() {
         stop()
 
-        remoteChangeTask = Task { [weak self] in
-            for await _ in NotificationCenter.default.notifications(named: .NSPersistentStoreRemoteChange) {
+        // Both tasks are tagged @MainActor so the call to
+        // self?.handleRemoteChange() / handleCloudKitEvent() lands on
+        // the actor without an extra hop. The notifications AsyncSequence
+        // is itself isolated-friendly.
+        remoteChangeTask = Task { @MainActor [weak self] in
+            for await _ in NotificationCenter.default.notifications(
+                named: .NSPersistentStoreRemoteChange
+            ) {
                 self?.handleRemoteChange()
             }
         }
 
-        cloudKitEventTask = Task { [weak self] in
+        cloudKitEventTask = Task { @MainActor [weak self] in
             for await notification in NotificationCenter.default.notifications(
                 named: NSPersistentCloudKitContainer.eventChangedNotification
             ) {

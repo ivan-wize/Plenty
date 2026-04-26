@@ -1,119 +1,205 @@
 //
-//  Typography.swift
+//  StoreKitManager.swift
 //  Plenty
 //
-//  Target path: Plenty/DesignSystem/Typography.swift
+//  Target path: Plenty/Pro/StoreKitManager.swift
 //
-//  Typography tokens per PRD §4.4. Three typefaces, all Apple-provided:
+//  Single source of truth for Plenty Pro purchase state. Handles:
 //
-//    • SF Pro Display   headlines, hero numbers, section headers, 20pt+
-//    • SF Pro Text      body copy, list rows, secondary labels, <20pt
-//    • SF Pro Rounded   currency values only, wherever they appear
+//    • Loading the product from the App Store
+//    • Restoring previous purchases on launch
+//    • Initiating a purchase
+//    • Observing transactions (refunds, family sharing, parental approval)
+//    • Updating AppState.isProUnlocked when state changes
 //
-//  Weight conventions (PRD §4.4):
-//    • Hero currency display: Medium (500)
-//    • Headlines and section titles: Semibold (600)
-//    • Body copy: Regular (400)
-//    • Emphasis within body: Medium (500)
+//  iOS 26 StoreKit 2 only. No StoreKit 1 fallback.
 //
-//  Weights below Regular (400) or above Semibold (600) are not used in
-//  production UI. That rule is enforced by convention, not by this file.
+//  Product ID: "com.plenty.app.pro" — one-time, non-consumable, $9.99.
+//  Configure in App Store Connect and Plenty.storekit (test config).
 //
-//  Dynamic Type: every non-hero token is relative (`.title`, `.body`,
-//  `.caption`), so it scales through AX5 automatically. Hero tokens are
-//  fixed point size by design; apply `.minimumScaleFactor(0.5)` at the
-//  call site with a stacked fallback layout at AX3+.
+//  IMPORTANT: This module aliases StoreKit.Transaction as
+//  StoreTransaction throughout. The unqualified name `Transaction`
+//  inside the Plenty module resolves to our SwiftData @Model class,
+//  which has no `currentEntitlements` or `updates`. Always use
+//  `StoreTransaction` here.
 //
 
-import SwiftUI
+import Foundation
+import StoreKit
+import os
+import Observation
 
-// MARK: - Typography Namespace
+// Disambiguates StoreKit's Transaction from the project's SwiftData
+// @Model named Transaction. Only this file uses StoreKit's, so the
+// typealias is local-scoped intent.
+typealias StoreTransaction = StoreKit.Transaction
 
-enum Typography {
+private let logger = Logger(subsystem: "com.plenty.app", category: "storekit")
 
-    // MARK: Hero (SF Pro Rounded, Medium)
-    //
-    // The big rounded currency display that anchors the Home screen and
-    // any full-screen confirmation. Three canonical sizes. Fixed-size by
-    // design.
+@Observable
+@MainActor
+final class StoreKitManager {
 
-    enum Hero {
-        /// In-card hero, e.g. a total inside a section. 28pt.
-        static let compact = Font.system(size: 28, weight: .medium, design: .rounded)
-        /// Standalone hero on Home. 48pt.
-        static let display = Font.system(size: 48, weight: .medium, design: .rounded)
-        /// Full-screen confirm moments, e.g. goal completion. 56pt.
-        static let spotlight = Font.system(size: 56, weight: .medium, design: .rounded)
+    // MARK: - Constants
+
+    static let proProductID = "com.plenty.app.pro"
+
+    // MARK: - State
+
+    /// The Pro product, loaded from the App Store. Nil while loading or
+    /// on failure. Views can read `formattedPrice` for display.
+    private(set) var proProduct: Product?
+
+    /// Whether the product load is in progress.
+    private(set) var isLoadingProduct = false
+
+    /// Whether a purchase is currently in flight.
+    private(set) var isPurchasing = false
+
+    /// Last error from a purchase or load attempt. Cleared on next success.
+    private(set) var lastError: Error?
+
+    /// Reference to AppState so this manager can flip isProUnlocked.
+    /// Set by Plenty.app via `attach(appState:)` after both objects exist.
+    private weak var appState: AppState?
+
+    // MARK: - Transaction Listener
+
+    private var transactionListener: Task<Void, Never>?
+
+    // MARK: - Init
+
+    init(appState: AppState? = nil) {
+        self.appState = appState
+        self.transactionListener = listenForTransactions()
     }
 
-    // MARK: Currency (SF Pro Rounded)
-    //
-    // Smaller currency values: list row amounts, secondary context, glance
-    // items. Rounded design for numeric continuity with the hero.
-
-    enum Currency {
-        /// Amount on a list row. Semibold for emphasis against row text.
-        static let row = Font.system(.body, design: .rounded).weight(.semibold)
-        /// Secondary amount, e.g. "of $3,000". Regular weight.
-        static let secondary = Font.system(.subheadline, design: .rounded)
-        /// Widget medium currency. Fixed 18pt.
-        static let widgetMedium = Font.system(size: 18, weight: .semibold, design: .rounded)
+    deinit {
+        transactionListener?.cancel()
     }
 
-    // MARK: Titles (SF Pro Display, Semibold)
-
-    enum Title {
-        /// Screen title, e.g. "Accounts". 28pt semibold.
-        static let large = Font.system(size: 28, weight: .semibold, design: .default)
-        /// Section title above a card group. 22pt semibold.
-        static let medium = Font.system(size: 22, weight: .semibold, design: .default)
-        /// Small section title. 20pt semibold. Boundary between Display and Text.
-        static let small = Font.system(size: 20, weight: .semibold, design: .default)
+    /// Set the AppState reference. Called once by PlentyApp after
+    /// both objects exist.
+    func attach(appState: AppState) {
+        self.appState = appState
     }
 
-    // MARK: Body (SF Pro Text)
+    // MARK: - Public Surface
 
-    enum Body {
-        /// Default body copy. Regular weight.
-        static let regular = Font.body
-        /// Body copy with emphasis (e.g. The Read sentence). Medium weight.
-        static let emphasis = Font.body.weight(.medium)
-        /// Secondary body, same size as body.
-        static let secondary = Font.body
+    /// Display price ("$9.99"). Falls back to a placeholder while loading.
+    var formattedPrice: String {
+        proProduct?.displayPrice ?? "$9.99"
     }
 
-    // MARK: Supporting (SF Pro Text)
+    /// Load the Pro product from the App Store. Idempotent; safe to call
+    /// repeatedly (results cached after first success).
+    func loadProduct() async {
+        guard proProduct == nil else { return }
+        isLoadingProduct = true
+        defer { isLoadingProduct = false }
 
-    enum Support {
-        /// Subheadline, e.g. section labels next to cards.
-        static let subheadline = Font.subheadline
-        /// Footnote for tertiary metadata.
-        static let footnote = Font.footnote
-        /// Caption for the smallest supporting text.
-        static let caption = Font.caption
-    }
-}
-
-// MARK: - Font Extensions
-//
-// Keeps the legacy `.heroAmount()` call shape from Left for any code that
-// copies forward, while routing to the new canonical tokens.
-
-extension Font {
-
-    /// The rounded-design currency font used for hero amounts.
-    /// Maps to `Typography.Hero` sizes.
-    static func heroAmount(_ size: HeroSize = .display) -> Font {
-        switch size {
-        case .compact:   return Typography.Hero.compact
-        case .display:   return Typography.Hero.display
-        case .spotlight: return Typography.Hero.spotlight
+        do {
+            let products = try await Product.products(for: [Self.proProductID])
+            self.proProduct = products.first
+            if proProduct == nil {
+                logger.warning("Pro product not found in App Store response.")
+            }
+        } catch {
+            logger.error("Failed to load Pro product: \(error.localizedDescription)")
+            self.lastError = error
         }
     }
 
-    enum HeroSize {
-        case compact    // 28pt
-        case display    // 48pt
-        case spotlight  // 56pt
+    /// Check current entitlements at launch. Sets isProUnlocked if a
+    /// valid Pro purchase exists.
+    func refreshEntitlements() async {
+        for await result in StoreTransaction.currentEntitlements {
+            if case .verified(let transaction) = result,
+               transaction.productID == Self.proProductID,
+               transaction.revocationDate == nil {
+                appState?.isProUnlocked = true
+                return
+            }
+        }
+        // No valid entitlement found.
+        appState?.isProUnlocked = false
+    }
+
+    /// Initiate a purchase. Returns true on success.
+    @discardableResult
+    func purchasePro() async -> Bool {
+        guard let product = proProduct else {
+            logger.warning("purchasePro called before product loaded.")
+            await loadProduct()
+            guard proProduct != nil else { return false }
+            return await purchasePro()
+        }
+
+        isPurchasing = true
+        defer { isPurchasing = false }
+
+        do {
+            let result = try await product.purchase()
+
+            switch result {
+            case .success(let verification):
+                if case .verified(let transaction) = verification {
+                    appState?.isProUnlocked = true
+                    await transaction.finish()
+                    return true
+                } else {
+                    logger.warning("Purchase verification failed.")
+                    return false
+                }
+            case .userCancelled:
+                return false
+            case .pending:
+                // Parental approval, payment method action required, etc.
+                // Listener will pick it up when it resolves.
+                return false
+            @unknown default:
+                return false
+            }
+        } catch {
+            logger.error("Purchase failed: \(error.localizedDescription)")
+            self.lastError = error
+            return false
+        }
+    }
+
+    /// Restore previous purchases. Calls AppStore.sync() and re-checks
+    /// entitlements. Used by the "Restore Purchases" button.
+    @discardableResult
+    func restorePurchases() async -> Bool {
+        do {
+            try await AppStore.sync()
+            await refreshEntitlements()
+            return appState?.isProUnlocked ?? false
+        } catch {
+            logger.error("Restore failed: \(error.localizedDescription)")
+            self.lastError = error
+            return false
+        }
+    }
+
+    // MARK: - Transaction Listener
+
+    /// Long-running task that listens for transaction updates from
+    /// outside the app (refunds, family sharing changes, parental
+    /// approval completion).
+    private func listenForTransactions() -> Task<Void, Never> {
+        Task(priority: .background) { [weak self] in
+            for await result in StoreTransaction.updates {
+                guard let self else { return }
+                if case .verified(let transaction) = result,
+                   transaction.productID == Self.proProductID {
+                    let revoked = transaction.revocationDate != nil
+                    await MainActor.run {
+                        self.appState?.isProUnlocked = !revoked
+                    }
+                    await transaction.finish()
+                }
+            }
+        }
     }
 }

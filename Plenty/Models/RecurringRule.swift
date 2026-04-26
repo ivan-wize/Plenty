@@ -142,6 +142,13 @@ struct RecurringRule: Codable, Equatable, Hashable, Sendable {
         }
     }
 
+    /// Convenience: does this rule produce any occurrences in the given month?
+    /// Used by NotificationScheduler to decide whether to schedule a reminder
+    /// for next month's recurring bills.
+    func occursIn(month: Int, year: Int, calendar: Calendar = .current) -> Bool {
+        !occurrences(inMonth: month, year: year, calendar: calendar).isEmpty
+    }
+
     private func isWithinRuleWindow(_ date: Date) -> Bool {
         if date < anchorDate { return false }
         if let endDate, date > endDate { return false }

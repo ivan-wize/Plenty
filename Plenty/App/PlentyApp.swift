@@ -4,16 +4,19 @@
 //
 //  Target path: Plenty/App/PlentyApp.swift
 //
-//  Application entry point. Wires:
-//    • SwiftData ModelContainer via ModelContainerFactory (Phase 3)
-//    • AppState as an @Observable environment object (Phase 1)
-//    • CloudKitSyncMonitor as an @Observable environment object (Phase 3)
-//    • AppearanceMode preferred color scheme via @AppStorage
+//  Application entry point. Wires every @Observable manager that
+//  RootView and its descendants depend on into the SwiftUI environment:
 //
-//  Sync monitor starts on appear and surfaces sync errors through the
-//  RootView banner (Phase 4 onward will render that banner). For Phase 3
-//  DoD verification, watch the console: clean sync looks like
-//  "CloudKit sync event completed" entries with no errors.
+//    • AppState                     — selected tab, pending sheets, errors
+//    • CloudKitSyncMonitor          — background sync status
+//    • StoreKitManager              — Pro purchase state
+//    • NotificationManager          — auth + per-channel toggles
+//    • SubscriptionReminderManager  — EventKit-based cancel reminders
+//
+//  Construction order: each manager is built by SwiftUI when the
+//  property initializers run. AppState wiring happens in `.task` after
+//  the View tree exists, since the @State properties can't reference
+//  one another in their initializers.
 //
 
 import SwiftUI
@@ -22,8 +25,13 @@ import SwiftData
 @main
 struct PlentyApp: App {
 
+    // MARK: - Managers
+
     @State private var appState = AppState()
     @State private var syncMonitor = CloudKitSyncMonitor()
+    @State private var storeKit = StoreKitManager()
+    @State private var notifications = NotificationManager()
+    @State private var subscriptionReminders = SubscriptionReminderManager()
 
     @AppStorage(AppearanceMode.storageKey) private var appearanceRaw = AppearanceMode.system.rawValue
 
@@ -35,7 +43,7 @@ struct PlentyApp: App {
         // Build the container once at launch. Three-tier fallback inside
         // the factory means this never throws; worst case we fall back
         // to in-memory storage and the user is shown a "sync disabled"
-        // notice via onCloudKitDisabled.
+        // notice via the sync monitor.
         self.container = ModelContainerFactory.make()
     }
 
@@ -46,8 +54,17 @@ struct PlentyApp: App {
             RootView()
                 .environment(appState)
                 .environment(syncMonitor)
+                .environment(storeKit)
+                .environment(notifications)
+                .environment(subscriptionReminders)
                 .preferredColorScheme(currentAppearance.colorScheme)
                 .task {
+                    // Cross-wire managers that need a reference to AppState.
+                    // Done here (not in init) because @State property
+                    // initializers can't reference one another.
+                    storeKit.attach(appState: appState)
+                    syncMonitor.attach(appState: appState)
+
                     syncMonitor.start()
 
                     // If CloudKit failed to initialize at container time,

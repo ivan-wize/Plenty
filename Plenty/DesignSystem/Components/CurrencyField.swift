@@ -4,65 +4,146 @@
 //
 //  Target path: Plenty/DesignSystem/CurrencyField.swift
 //
-//  A reusable currency input. Binds to a Decimal, accepts digit-only
-//  entry through the decimalPad keyboard, and renders a formatted
-//  currency display. Caller controls the prompt and accent color.
+//  A decimal-pad text field that binds to a Decimal. Used by every
+//  Add/Edit sheet in the app for amount entry.
 //
-//  Used by every Add/Edit sheet that takes an amount. Centralizes the
-//  Decimal ↔ String conversion so each sheet doesn't reinvent it.
+//  Design choices:
+//    • Default font is Typography.Hero.compact (28pt rounded medium)
+//      to match the "$" that callers render alongside it. Inline call
+//      sites that want a smaller treatment override with .font().
+//    • Right-aligned by default so currency reads cleanly when paired
+//      with a left-aligned label in a Form row. Hero call sites place
+//      the field after a "$" in an HStack and the alignment falls out
+//      naturally.
+//    • Tint drives both the cursor and the selection highlight — set
+//      it sage for primary fields, terracotta for destructive money
+//      (statement balance, debt principal), .secondary for inline.
+//    • A zero value renders as the prompt placeholder rather than "0"
+//      so empty fields look empty.
+//
+//  Locale-aware decimal separator: parses both "." and "," so users
+//  in EU locales can type comma-decimals.
 //
 
 import SwiftUI
 
 struct CurrencyField: View {
 
-    @Binding var value: Decimal
-    var prompt: String = "Amount"
-    var accent: Color = Theme.sage
+    // MARK: - API
 
+    @Binding var value: Decimal
+    let prompt: String
+    let accent: Color
+
+    // MARK: - Internal State
+
+    @State private var text: String = ""
     @FocusState private var isFocused: Bool
-    @State private var rawText: String = ""
+
+    // MARK: - Body
 
     var body: some View {
-        TextField(prompt, text: $rawText)
-            .font(.system(size: 28, weight: .semibold, design: .rounded))
-            .monospacedDigit()
-            .multilineTextAlignment(.trailing)
-            .keyboardType(.decimalPad)
-            .focused($isFocused)
-            .foregroundStyle(value > 0 ? accent : .primary)
-            .onAppear {
-                rawText = formatForEditing(value)
-            }
-            .onChange(of: rawText) { _, newText in
-                value = parseDecimal(from: newText)
-            }
-            .onChange(of: value) { _, newValue in
-                // External changes (like reset on save) should reflect
-                // back into the field.
-                let formatted = formatForEditing(newValue)
-                if formatted != rawText {
-                    rawText = formatted
+        TextField(
+            prompt,
+            text: $text,
+            prompt: Text(prompt).foregroundStyle(.tertiary)
+        )
+        .keyboardType(.decimalPad)
+        .multilineTextAlignment(.trailing)
+        .font(Typography.Hero.compact)
+        .monospacedDigit()
+        .tint(accent)
+        .focused($isFocused)
+        .lineLimit(1)
+        .minimumScaleFactor(0.5)
+        .onAppear {
+            text = displayString(for: value)
+        }
+        .onChange(of: text) { _, newText in
+            commitTextToValue(newText)
+        }
+        .onChange(of: value) { _, newValue in
+            // Only sync from value to text when the user isn't actively
+            // typing — otherwise we fight their input.
+            if !isFocused {
+                let formatted = displayString(for: newValue)
+                if formatted != text {
+                    text = formatted
                 }
             }
+        }
+        .accessibilityLabel("Amount")
+        .accessibilityValue(value == 0 ? "Empty" : value.formatted(.currency(code: Locale.current.currency?.identifier ?? "USD")))
     }
 
-    // MARK: - Formatting
+    // MARK: - Conversion
 
-    private func formatForEditing(_ value: Decimal) -> String {
-        if value == 0 { return "" }
-        return value.description
+    private func displayString(for d: Decimal) -> String {
+        guard d != 0 else { return "" }
+        // Plain numeric string, no thousands separators (the decimal
+        // pad doesn't include a comma so users can't type them anyway).
+        var copy = d
+        var rounded = Decimal.zero
+        NSDecimalRound(&rounded, &copy, 2, .plain)
+
+        // Drop trailing .00 for a cleaner display when the value is whole.
+        let asDouble = NSDecimalNumber(decimal: rounded).doubleValue
+        if asDouble == asDouble.rounded() {
+            return String(Int(asDouble))
+        }
+        return "\(rounded)"
     }
 
-    private func parseDecimal(from text: String) -> Decimal {
-        let cleaned = text.filter { $0.isNumber || $0 == "." }
-        return Decimal(string: cleaned) ?? 0
+    private func commitTextToValue(_ raw: String) {
+        let normalized = raw
+            .replacingOccurrences(of: ",", with: ".")
+            .replacingOccurrences(of: " ", with: "")
+
+        if normalized.isEmpty {
+            if value != 0 { value = 0 }
+            return
+        }
+
+        if let decimal = Decimal(string: normalized) {
+            if decimal != value {
+                value = decimal
+            }
+        }
     }
 }
 
-#Preview {
-    @Previewable @State var amount: Decimal = 0
-    return Form {
-        CurrencyField(value: $amount, prompt: "Amount")
+// MARK: - Preview
+
+#Preview("Empty (sage)") {
+    StatefulPreview { CurrencyFieldPreviewWrapper(initial: 0, accent: Theme.sage) }
+        .padding()
+}
+
+#Preview("With value (terracotta)") {
+    StatefulPreview { CurrencyFieldPreviewWrapper(initial: 1234.56, accent: Theme.terracotta) }
+        .padding()
+}
+
+private struct CurrencyFieldPreviewWrapper: View {
+    @State private var value: Decimal
+    let accent: Color
+
+    init(initial: Decimal, accent: Color) {
+        _value = State(initialValue: initial)
+        self.accent = accent
     }
+
+    var body: some View {
+        HStack {
+            Text("$")
+                .font(.system(size: 28, weight: .semibold, design: .rounded))
+                .foregroundStyle(.secondary)
+            CurrencyField(value: $value, prompt: "0", accent: accent)
+        }
+    }
+}
+
+private struct StatefulPreview<Content: View>: View {
+    @ViewBuilder let content: () -> Content
+    var body: some View { content() }
 }

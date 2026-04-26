@@ -9,6 +9,17 @@
 //  Phase 6: isProUnlocked.
 //  Phase 10: + lastError for app-level error banner.
 //
+//  IMPORTANT: PendingAddSheet is NOT Sendable. Several cases hold
+//  references to SwiftData @Model classes (Transaction, Account,
+//  SavingsGoal), which are MainActor-isolated and not Sendable. The
+//  whole AppState is @MainActor so this is safe — the enum never
+//  crosses isolation domains in practice.
+//
+//  Equatable is implemented manually because synthesized Equatable on
+//  enum cases that hold SwiftData model references can match by
+//  reference identity in surprising ways. We compare by `id` so two
+//  fetches of the same record compare equal.
+//
 
 import Foundation
 import Observation
@@ -75,7 +86,7 @@ final class AppState {
 
     var pendingAddSheet: PendingAddSheet?
 
-    enum PendingAddSheet: Identifiable, Equatable, Sendable {
+    enum PendingAddSheet: Identifiable, Equatable {
         case expense
         case income(preferRecurring: Bool)
         case bill(existing: Transaction? = nil)
@@ -97,6 +108,34 @@ final class AppState {
             case .subscription:                     return "subscription"
             case .savingsGoal(let existing):        return "savingsGoal.\(existing?.id.uuidString ?? "new")"
             case .logContribution(let goal):        return "contribution.\(goal.id.uuidString)"
+            }
+        }
+
+        // Manual Equatable: compare by id so two fetches of the same
+        // record compare equal. Synthesized Equatable on @Model classes
+        // can be reference-based in subtle ways.
+        static func == (lhs: PendingAddSheet, rhs: PendingAddSheet) -> Bool {
+            switch (lhs, rhs) {
+            case (.expense, .expense):
+                return true
+            case (.income(let a), .income(let b)):
+                return a == b
+            case (.bill(let a), .bill(let b)):
+                return a?.id == b?.id
+            case (.account(let a), .account(let b)):
+                return a?.id == b?.id
+            case (.updateBalance(let a), .updateBalance(let b)):
+                return a.id == b.id
+            case (.confirmIncome(let a), .confirmIncome(let b)):
+                return a.id == b.id
+            case (.subscription, .subscription):
+                return true
+            case (.savingsGoal(let a), .savingsGoal(let b)):
+                return a?.id == b?.id
+            case (.logContribution(let a), .logContribution(let b)):
+                return a.id == b.id
+            default:
+                return false
             }
         }
     }
