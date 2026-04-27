@@ -6,13 +6,16 @@
 //
 //  Snowball and avalanche payoff strategy calculator. Port from Left.
 //
-//  Model of reality:
-//    • User commits to a fixed monthly outflow: sum(minimums) + extra
-//    • Each month, every debt accrues interest, then receives its minimum
-//    • Extra (including freed minimums from cleared debts) stacks onto
-//      the highest-priority remaining debt, cascading as debts clear
-//    • Priority is determined by the ordering closure (snowball =
-//      smallest balance first; avalanche = highest rate first)
+//  Replaces the prior DebtEngine. Three additions:
+//    • `Strategy` enum (avalanche / snowball)
+//    • `PayoffPlan` struct (compact totalMonths + totalInterest summary)
+//    • `computePlan(debts:extraMonthly:strategy:)` adapter that wraps
+//      the existing `calculateAvalanche` / `calculateSnowball` and
+//      returns a PayoffPlan for the cards and detail views.
+//
+//  No behavior change to the underlying simulator. The original
+//  StrategyOutcome / StrategyComparison API is unchanged for callers
+//  that need the full payoff steps (DebtPayoffView uses them).
 //
 
 import Foundation
@@ -65,6 +68,94 @@ enum DebtEngine {
         let minimumOnly: StrategyOutcome
     }
 
+    // MARK: - Strategy + Plan (used by cards)
+
+    /// Selectable payoff strategy. The two cards on Plan tab and the
+    /// detail view both use this.
+    enum Strategy: String, Codable, CaseIterable, Identifiable, Sendable {
+        case avalanche  // highest APR first
+        case snowball   // smallest balance first
+
+        var id: String { rawValue }
+
+        var displayName: String {
+            switch self {
+            case .avalanche: return "Avalanche"
+            case .snowball:  return "Snowball"
+            }
+        }
+
+        var subtitle: String {
+            switch self {
+            case .avalanche: return "Highest APR first"
+            case .snowball:  return "Smallest balance first"
+            }
+        }
+
+        var explanation: String {
+            switch self {
+            case .avalanche:
+                return "Pays down the debt with the highest interest rate first. Mathematically optimal — minimizes total interest paid."
+            case .snowball:
+                return "Pays down the smallest balance first. Builds momentum by clearing accounts quickly. Costs more interest but feels better."
+            }
+        }
+    }
+
+    /// Compact summary of a payoff strategy result. Cards and detail
+    /// views format from this.
+    struct PayoffPlan: Equatable, Sendable {
+        let strategy: Strategy
+        let totalMonths: Int
+        let totalInterest: Decimal
+        let isPayable: Bool
+
+        /// Per-debt payoff order (for detail views).
+        let steps: [PayoffStep]
+    }
+
+    /// Adapter for the cards. Wraps calculateAvalanche / calculateSnowball
+    /// and packages the result as a PayoffPlan. Returns nil only when
+    /// `debts` is empty; unpayable scenarios are signaled via
+    /// `plan.isPayable == false` so the UI can show a "needs more
+    /// monthly extra" message instead of nothing.
+    static func computePlan(
+        debts: [Account],
+        extraMonthly: Decimal,
+        strategy: Strategy
+    ) -> PayoffPlan? {
+
+        let eligible = eligibleDebtAccounts(debts)
+        guard !eligible.isEmpty else { return nil }
+
+        let outcome: StrategyOutcome
+        switch strategy {
+        case .avalanche:
+            outcome = calculateAvalanche(accounts: eligible, extraMonthly: extraMonthly)
+        case .snowball:
+            outcome = calculateSnowball(accounts: eligible, extraMonthly: extraMonthly)
+        }
+
+        switch outcome {
+        case .payoff(let months, let interest, let steps):
+            return PayoffPlan(
+                strategy: strategy,
+                totalMonths: months,
+                totalInterest: interest,
+                isPayable: true,
+                steps: steps
+            )
+        case .unpayable:
+            return PayoffPlan(
+                strategy: strategy,
+                totalMonths: 0,
+                totalInterest: 0,
+                isPayable: false,
+                steps: []
+            )
+        }
+    }
+
     // MARK: - Filters
 
     static func eligibleDebtAccounts(_ accounts: [Account]) -> [Account] {
@@ -90,13 +181,12 @@ enum DebtEngine {
         let monthlyRate = rate / 100 / 12
         let monthlyInterest = balance * monthlyRate
 
-        // Monthly payment must cover at least the monthly interest.
         if monthlyPayment <= monthlyInterest { return nil }
 
         var remaining = balance
         var totalInterest: Decimal = 0
         var months = 0
-        let maxMonths = 1000  // safety cap
+        let maxMonths = 1000
 
         while remaining > 0 && months < maxMonths {
             let interest = remaining * monthlyRate
@@ -189,7 +279,6 @@ enum DebtEngine {
             return .payoff(months: 0, totalInterest: 0, steps: [])
         }
 
-        // Check feasibility: sum of minimums must cover total monthly interest.
         var totalMonthlyInterest: Decimal = 0
         var totalMinimums: Decimal = 0
         for account in accounts where account.balance > 0 {
@@ -204,7 +293,6 @@ enum DebtEngine {
             return .unpayable(minimumExtraNeeded: roundToCents(needed))
         }
 
-        // Build the simulation state, ordered by the strategy.
         var states: [DebtState] = accounts
             .filter { $0.balance > 0 }
             .sorted(by: ordering)
@@ -228,28 +316,22 @@ enum DebtEngine {
         while !states.isEmpty && monthIndex < maxMonths {
             monthIndex += 1
 
-            // 1. Accrue interest on every debt.
             for i in states.indices {
                 let interest = states[i].balance * states[i].monthlyRate
                 states[i].balance += interest
                 totalInterest += interest
             }
 
-            // 2. Pay minimums on every debt.
             var extraPool = max(0, extraMonthly)
-            var minimumsFreed: Decimal = 0
 
             for i in states.indices {
                 let pay = min(states[i].minimum, states[i].balance)
                 states[i].balance -= pay
-                // Freed minimum: if this debt is smaller than its minimum,
-                // the excess adds to the extra pool.
                 if pay < states[i].minimum {
                     extraPool += states[i].minimum - pay
                 }
             }
 
-            // 3. Apply extra pool to the highest-priority remaining debt.
             while extraPool > 0, let firstIdx = states.firstIndex(where: { $0.balance > 0 }) {
                 let pay = min(extraPool, states[firstIdx].balance)
                 states[firstIdx].balance -= pay
@@ -257,11 +339,9 @@ enum DebtEngine {
                 if states[firstIdx].balance <= 0 { break }
             }
 
-            // 4. Collect cleared debts. Their minimums are freed for future months.
             var clearedIndices: [Int] = []
             for (i, state) in states.enumerated() where state.balance <= 0 {
                 clearedIndices.append(i)
-                minimumsFreed += state.minimum
 
                 let payoffDate = calendar.date(byAdding: .month, value: monthIndex - 1, to: startOfNextMonth) ?? .now
                 steps.append(PayoffStep(
@@ -272,7 +352,6 @@ enum DebtEngine {
                 ))
             }
 
-            // Remove cleared debts.
             for i in clearedIndices.reversed() {
                 states.remove(at: i)
             }

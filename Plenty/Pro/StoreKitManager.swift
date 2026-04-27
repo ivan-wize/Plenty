@@ -17,11 +17,24 @@
 //  Product ID: "com.plenty.app.pro" — one-time, non-consumable, $9.99.
 //  Configure in App Store Connect and Plenty.storekit (test config).
 //
+//  IMPORTANT — namespace collision:
+//  This module already defines `Transaction` as a SwiftData @Model
+//  (Plenty/Models/Transaction.swift). The unqualified name `Transaction`
+//  inside the Plenty module therefore resolves to the SwiftData class,
+//  which has no `currentEntitlements` or `updates`. Always reference
+//  StoreKit's transaction type via the `StoreTransaction` typealias
+//  defined below.
+//
 
 import Foundation
 import StoreKit
 import os
 import Observation
+
+// Disambiguates StoreKit's Transaction from the project's SwiftData
+// @Model named Transaction. Only this file uses StoreKit's, so the
+// typealias is local-scoped intent.
+typealias StoreTransaction = StoreKit.Transaction
 
 private let logger = Logger(subsystem: "com.plenty.app", category: "storekit")
 
@@ -49,26 +62,28 @@ final class StoreKitManager {
     private(set) var lastError: Error?
 
     /// Reference to AppState so this manager can flip isProUnlocked.
-    /// Set by Plenty.app at construction time.
+    /// Set by PlentyApp via `attach(appState:)` after both objects exist.
     private weak var appState: AppState?
 
-    // MARK: - Transaction Listener
-
-    private var transactionListener: Task<Void, Never>?
-
     // MARK: - Init
+    //
+    // Note: we deliberately do NOT store the transaction-listener Task
+    // on `self`. Storing it forces a `deinit` body that touches a
+    // @MainActor-isolated property from a nonisolated context, which
+    // Swift 6 strict concurrency rejects. Instead the listener captures
+    // `self` weakly and exits on the next emission after deallocation.
+    //
+    // In practice StoreKitManager lives for the app lifetime (held as
+    // @State on PlentyApp), so the listener never needs to be torn down.
 
     init(appState: AppState? = nil) {
         self.appState = appState
-        self.transactionListener = listenForTransactions()
+        startTransactionListener()
     }
 
-    deinit {
-        transactionListener?.cancel()
-    }
-
-    /// Set the AppState reference. Called once by Plenty.app after
-    /// both objects exist.
+    /// Set the AppState reference. Called once by PlentyApp after both
+    /// objects exist (the cross-wiring happens in `.task` because
+    /// @State property initializers can't reference one another).
     func attach(appState: AppState) {
         self.appState = appState
     }
@@ -102,7 +117,7 @@ final class StoreKitManager {
     /// Check current entitlements at launch. Sets isProUnlocked if a
     /// valid Pro purchase exists.
     func refreshEntitlements() async {
-        for await result in Transaction.currentEntitlements {
+        for await result in StoreTransaction.currentEntitlements {
             if case .verified(let transaction) = result,
                transaction.productID == Self.proProductID,
                transaction.revocationDate == nil {
@@ -143,8 +158,8 @@ final class StoreKitManager {
             case .userCancelled:
                 return false
             case .pending:
-                // Parental approval, payment method action required, etc.
-                // Listener will pick it up when it resolves.
+                // Parental approval, payment-method action required, etc.
+                // The listener will pick it up when it resolves.
                 return false
             @unknown default:
                 return false
@@ -175,19 +190,17 @@ final class StoreKitManager {
 
     /// Long-running task that listens for transaction updates from
     /// outside the app (refunds, family sharing changes, parental
-    /// approval completion).
-    private func listenForTransactions() -> Task<Void, Never> {
-        Task(priority: .background) { [weak self] in
-            for await result in Transaction.updates {
+    /// approval completion). Captures `self` weakly so it self-terminates
+    /// on the next emission after deallocation.
+    private func startTransactionListener() {
+        Task.detached(priority: .background) { [weak self] in
+            for await result in StoreTransaction.updates {
                 guard let self else { return }
                 if case .verified(let transaction) = result,
                    transaction.productID == Self.proProductID {
+                    let revoked = transaction.revocationDate != nil
                     await MainActor.run {
-                        if transaction.revocationDate == nil {
-                            self.appState?.isProUnlocked = true
-                        } else {
-                            self.appState?.isProUnlocked = false
-                        }
+                        self.appState?.isProUnlocked = !revoked
                     }
                     await transaction.finish()
                 }

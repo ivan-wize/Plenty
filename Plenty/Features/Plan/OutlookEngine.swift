@@ -175,29 +175,3 @@ extension IncomeSource {
         }
     }
 }
-
-// MARK: - RecurringRule Occurrence Check
-
-extension RecurringRule {
-
-    /// Whether this rule would generate an occurrence in the given
-    /// month/year. Phase 6 only handles the monthly case; weekly/annual
-    /// would need separate handling here.
-    func occursIn(month: Int, year: Int, calendar: Calendar = .current) -> Bool {
-        switch frequency {
-        case .monthly:
-            // Monthly rules occur every month after their start.
-            var startComponents = DateComponents()
-            startComponents.year = year
-            startComponents.month = month
-            startComponents.day = dayOfMonth ?? 1
-            guard let target = calendar.date(from: startComponents) else { return false }
-            return target >= startDate
-        case .weekly, .annual:
-            // Phase 6 simplification: only monthly bills project.
-            // Weekly bills (rare) and annual bills (HOA, taxes) won't
-            // appear in Outlook in v1.
-            return false
-        }
-    }
-}

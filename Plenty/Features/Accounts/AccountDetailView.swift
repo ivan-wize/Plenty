@@ -12,8 +12,12 @@
 //
 //  Toolbar: Update Balance (primary), Edit (secondary).
 //
-//  Phase 5 ships the list of recent transactions. Phase 6 will add a
-//  6-month balance trend chart at the top using AccountBalance history.
+//  Replaces the prior AccountDetailView. Two changes:
+//    • Recent transactions section now caps at 10 (was 20) and shows
+//      a "See all N transactions →" NavigationLink at the bottom that
+//      pushes AccountTransactionsView for the full filterable list.
+//    • TransactionRow now passes showsAccount: false since every row
+//      belongs to this account by definition.
 //
 
 import SwiftUI
@@ -39,7 +43,7 @@ struct AccountDetailView: View {
     }
 
     private var recentTransactions: [Transaction] {
-        Array(accountTransactions.prefix(20))
+        Array(accountTransactions.prefix(10))
     }
 
     // MARK: - Body
@@ -94,13 +98,13 @@ struct AccountDetailView: View {
         Section {
             VStack(spacing: 8) {
                 Text(account.isAsset ? "Current balance" : "Currently owed")
-                    .font(Typography.Support.caption)
+                    .font(Typography.Support.label)
                     .foregroundStyle(.secondary)
                     .textCase(.uppercase)
                     .tracking(0.6)
 
                 Text(formattedBalance)
-                    .font(.system(size: 48, weight: .bold, design: .rounded))
+                    .font(.system(size: 48, weight: .medium, design: .rounded))
                     .monospacedDigit()
                     .foregroundStyle(account.isAsset ? .primary : Theme.terracotta)
 
@@ -172,15 +176,23 @@ struct AccountDetailView: View {
         } else {
             Section {
                 ForEach(recentTransactions) { tx in
-                    TransactionRow(transaction: tx)
+                    TransactionRow(transaction: tx, showsAccount: false)
+                }
+
+                if accountTransactions.count > recentTransactions.count {
+                    NavigationLink {
+                        AccountTransactionsView(account: account)
+                    } label: {
+                        HStack {
+                            Text("See all \(accountTransactions.count) transactions")
+                                .font(Typography.Body.regular)
+                                .foregroundStyle(Theme.sage)
+                            Spacer()
+                        }
+                    }
                 }
             } header: {
                 Text("Recent Activity")
-            } footer: {
-                if accountTransactions.count > recentTransactions.count {
-                    Text("Showing the most recent 20 of \(accountTransactions.count).")
-                        .font(Typography.Support.caption)
-                }
             }
         }
     }
@@ -211,6 +223,8 @@ struct AccountDetailView: View {
         return "Updated \(days)d ago"
     }
 }
+
+// MARK: - Local formatting
 
 private extension Decimal {
     func asPlainCurrency() -> String {

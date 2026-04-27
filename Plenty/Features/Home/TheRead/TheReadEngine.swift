@@ -14,9 +14,54 @@
 //  same restraint policy: when there's nothing meaningful to say, say
 //  nothing (silence kind).
 //
+//  Notes on the AI types in this file:
+//    • The three @Generable structs (ClassifierOutput, BodyGeneration,
+//      WeeklyBodyGeneration) are declared fileprivate, not private.
+//      The @Generable macro emits conformance code in extensions at
+//      file scope, which can't reach a private type nested inside an
+//      enum.
+//    • Foundation Models' @Generable supports a fixed set of primitive
+//      types (String, Int, Double, Bool, Decimal, and Optionals/Arrays
+//      of those). Date is NOT supported, so primaryDate is exchanged as
+//      an ISO-8601 String and parsed locally before validation.
+//
 
 import Foundation
 import FoundationModels
+
+// MARK: - Generable Types
+//
+// Declared fileprivate (not private) so the @Generable macro's
+// generated extensions can see them.
+
+@Generable
+fileprivate struct ClassifierOutput {
+    @Guide(.anyOf(["silence", "paceWarning", "paceTrend", "billReminder", "incomeReminder", "milestone"]))
+    var kind: String
+}
+
+@Generable
+fileprivate struct BodyGeneration {
+    @Guide(description: "The Read sentence shown to the user. One short sentence, second-person, possession-leading, no exclamations, no em-dashes.")
+    var body: String
+
+    @Guide(description: "If the body mentions a dollar amount, the exact value as Decimal. Nil if no amount is mentioned.")
+    var primaryAmount: Decimal?
+
+    @Guide(description: "If the body references a specific calendar date, that date as an ISO-8601 string in the form YYYY-MM-DD (for example 2026-04-30). Nil if no date is mentioned.")
+    var primaryDate: String?
+}
+
+@Generable
+fileprivate struct WeeklyBodyGeneration {
+    @Guide(description: "The Sunday Read body. 1-3 short sentences. Calm, second-person, possession-leading. No exclamations, no em-dashes, no bullet points.")
+    var body: String
+
+    @Guide(description: "If the body mentions any dollar amounts, the most prominent one. Nil if no amounts mentioned.")
+    var primaryAmount: Decimal?
+}
+
+// MARK: - Engine
 
 enum TheReadEngine {
 
@@ -45,7 +90,7 @@ enum TheReadEngine {
         return deterministicGenerateWeekly(snapshot: snapshot)
     }
 
-    // MARK: - Daily AI Path (unchanged from Phase 4)
+    // MARK: - Daily AI Path
 
     private static func aiGenerate(snapshot: PlentySnapshot) async -> TheRead? {
         guard let kind = await aiClassify(snapshot: snapshot) else {
@@ -61,9 +106,14 @@ enum TheReadEngine {
                 return nil
             }
 
+            // Foundation Models doesn't support Date as a Generable type,
+            // so primaryDate arrives as an ISO-8601 string. Parse it here
+            // before handing to the validator.
+            let claimedDate = generation.primaryDate.flatMap(Self.parseISO8601(_:))
+
             let validation = TheReadValidator.validate(
                 claimedAmount: generation.primaryAmount,
-                claimedDate: generation.primaryDate,
+                claimedDate: claimedDate,
                 against: snapshot
             )
 
@@ -73,12 +123,6 @@ enum TheReadEngine {
             if attempt == 2 { return nil }
         }
         return nil
-    }
-
-    @Generable
-    private struct ClassifierOutput {
-        @Guide(.anyOf(["silence", "paceWarning", "paceTrend", "billReminder", "incomeReminder", "milestone"]))
-        var kind: String
     }
 
     private static func aiClassify(snapshot: PlentySnapshot) async -> TheRead.Kind? {
@@ -93,18 +137,6 @@ enum TheReadEngine {
         } catch {
             return nil
         }
-    }
-
-    @Generable
-    private struct BodyGeneration {
-        @Guide(description: "The Read sentence shown to the user. One short sentence, second-person, possession-leading, no exclamations, no em-dashes.")
-        var body: String
-
-        @Guide(description: "If the body mentions a dollar amount, the exact value as Decimal. Nil if no amount is mentioned.")
-        var primaryAmount: Decimal?
-
-        @Guide(description: "If the body references a specific date, that date. Nil if no date is mentioned.")
-        var primaryDate: Date?
     }
 
     private static func aiGenerateBody(
@@ -125,15 +157,6 @@ enum TheReadEngine {
     }
 
     // MARK: - Weekly AI Path (Phase 7)
-
-    @Generable
-    private struct WeeklyBodyGeneration {
-        @Guide(description: "The Sunday Read body. 1-3 short sentences. Calm, second-person, possession-leading. No exclamations, no em-dashes, no bullet points.")
-        var body: String
-
-        @Guide(description: "If the body mentions any dollar amounts, the most prominent one. Nil if no amounts mentioned.")
-        var primaryAmount: Decimal?
-    }
 
     private static func aiGenerateWeekly(snapshot: PlentySnapshot) async -> TheRead? {
         do {
@@ -168,7 +191,7 @@ enum TheReadEngine {
         }
     }
 
-    // MARK: - Daily Deterministic Path (unchanged from Phase 4)
+    // MARK: - Daily Deterministic Path
 
     static func deterministicGenerate(snapshot: PlentySnapshot) -> TheRead {
         let kind = deterministicClassify(snapshot)
@@ -193,7 +216,9 @@ enum TheReadEngine {
            sustainable > 0 {
             return .paceTrend
         }
-        if snapshot.actualSavingsThisMonth > 0 { return .milestone }
+        if snapshot.actualSavingsThisMonth > 0 {
+            return .milestone
+        }
         return .silence
     }
 
@@ -202,9 +227,9 @@ enum TheReadEngine {
         case .silence, .weekly:
             return ""
         case .paceWarning:
-            let pacePerDay = snapshot.smoothedDailyBurn.asCurrencyString()
+            let perDay = snapshot.smoothedDailyBurn.asCurrencyString()
             let sustainable = (snapshot.sustainableDailyBurn ?? 0).asCurrencyString()
-            return "Your spending sits at \(pacePerDay) a day. To finish the month with margin, \(sustainable) a day is the line."
+            return "You're spending about \(perDay) a day, above the \(sustainable) the rest of the month asks for."
         case .paceTrend:
             let pacePerDay = snapshot.smoothedDailyBurn.asCurrencyString()
             return "You're tracking under your usual pace at \(pacePerDay) a day. The room is there if you want it."
@@ -287,8 +312,7 @@ enum TheReadEngine {
         lines.append("pace: \(snapshot.pace)")
         lines.append("zone: \(snapshot.zone)")
         if let next = snapshot.nextIncomeDate {
-            let formatter = ISO8601DateFormatter()
-            lines.append("nextIncomeDate: \(formatter.string(from: next))")
+            lines.append("nextIncomeDate: \(Self.iso8601DateFormatter.string(from: next))")
         }
         return lines.joined(separator: "\n")
     }
@@ -326,7 +350,7 @@ enum TheReadEngine {
         • One sentence, complete and self-contained
         • Use plain currency formatting like "$1,840" or "$45 a day"
         • If you mention a dollar amount, set primaryAmount to that exact value
-        • If you mention a specific date, set primaryDate to that date
+        • If you mention a specific date, set primaryDate to that date as an ISO-8601 string in the form YYYY-MM-DD
         """
 
         let kindGuidance: String
@@ -381,13 +405,34 @@ enum TheReadEngine {
     one for validation.
     """
 
-    // MARK: - Formatters
+    // MARK: - Formatters / Parsers
 
     private static let weekdayFormatter: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "EEEE"
         return f
     }()
+
+    /// Renders Date → "YYYY-MM-DD" for snapshot context strings, and
+    /// reads back ISO-8601 date strings the model returns.
+    private static let iso8601DateFormatter: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withFullDate, .withDashSeparatorInDate]
+        return f
+    }()
+
+    /// Parse an ISO-8601 date string from the model. Accepts either
+    /// "YYYY-MM-DD" or full datetime strings; returns nil for malformed
+    /// input so the validator simply treats the date as not asserted.
+    private static func parseISO8601(_ raw: String) -> Date? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let date = iso8601DateFormatter.date(from: trimmed) {
+            return date
+        }
+        // Fallback: full-precision ISO-8601 (with time and timezone).
+        let full = ISO8601DateFormatter()
+        return full.date(from: trimmed)
+    }
 }
 
 // MARK: - Decimal Helpers

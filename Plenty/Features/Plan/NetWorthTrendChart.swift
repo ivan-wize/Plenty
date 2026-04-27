@@ -10,6 +10,10 @@
 //  (assets positive, liabilities negative). Renders as a line chart
 //  with sage stroke.
 //
+//  Replaces the prior NetWorthTrendChart. One change: AccountBalance
+//  exposes its timestamp as `recordedAt`, not `date` — the prior
+//  filter sort referenced a non-existent property.
+//
 
 import SwiftUI
 import Charts
@@ -179,8 +183,8 @@ struct NetWorthTrendChart: View {
 
     private func latestSnapshot(account: Account, before date: Date) -> Decimal {
         let snapshots = (account.balanceHistory ?? [])
-            .filter { $0.date <= date }
-            .sorted { $0.date > $1.date }
+            .filter { $0.recordedAt <= date }
+            .sorted { $0.recordedAt > $1.recordedAt }
 
         return snapshots.first?.balance ?? account.balance
     }
@@ -203,19 +207,7 @@ struct NetWorthTrendChart: View {
     }
 }
 
-// MARK: - Helpers
-
-private extension Calendar {
-    func endOfMonth(for date: Date) -> Date {
-        let comps = dateComponents([.year, .month], from: date)
-        guard var startOfMonth = self.date(from: comps),
-              let range = self.range(of: .day, in: .month, for: startOfMonth) else {
-            return date
-        }
-        startOfMonth = self.date(byAdding: .day, value: range.count - 1, to: startOfMonth) ?? startOfMonth
-        return self.date(bySettingHour: 23, minute: 59, second: 59, of: startOfMonth) ?? startOfMonth
-    }
-}
+// MARK: - Local helpers
 
 private extension Double {
     func compactCurrency() -> String {

@@ -89,7 +89,7 @@ struct SetupChecklistView: View {
             HStack(spacing: 14) {
                 Image(systemName: complete ? "checkmark.circle.fill" : "circle")
                     .font(.title3.weight(.regular))
-                    .foregroundStyle(complete ? Theme.sage : .tertiary)
+                    .foregroundStyle(complete ? AnyShapeStyle(Theme.sage) : AnyShapeStyle(HierarchicalShapeStyle.tertiary))
                     .symbolRenderingMode(.hierarchical)
 
                 Text(label)

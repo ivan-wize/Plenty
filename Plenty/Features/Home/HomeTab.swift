@@ -84,6 +84,8 @@ struct HomeTab: View {
                     // Phase 10: error banner above the hero
                     ErrorBanner(error: $state.lastError)
 
+                    DemoModeBanner()
+
                     HeroNumberView(snapshot: snapshot)
                         .currencyDynamicTypeCap()
 
@@ -126,7 +128,7 @@ struct HomeTab: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .principal) {
-                    Wordmark(.callout)
+                    Wordmark(.headline)
                 }
             }
         }

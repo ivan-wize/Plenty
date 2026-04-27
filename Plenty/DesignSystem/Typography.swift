@@ -1,205 +1,99 @@
 //
-//  StoreKitManager.swift
+//  Typography.swift
 //  Plenty
 //
-//  Target path: Plenty/Pro/StoreKitManager.swift
+//  Target path: Plenty/DesignSystem/Typography.swift
 //
-//  Single source of truth for Plenty Pro purchase state. Handles:
+//  Centralized type ramp. Single source of truth for every text style
+//  in the app. Per PRD §4.4:
 //
-//    • Loading the product from the App Store
-//    • Restoring previous purchases on launch
-//    • Initiating a purchase
-//    • Observing transactions (refunds, family sharing, parental approval)
-//    • Updating AppState.isProUnlocked when state changes
+//    • SF Pro Display  → ≥ 20pt (titles, hero numbers, section headers)
+//    • SF Pro Text     → < 20pt (body, list rows, secondary labels)
+//    • SF Pro Rounded  → currency values only, wherever they appear
 //
-//  iOS 26 StoreKit 2 only. No StoreKit 1 fallback.
+//  SwiftUI's `.system(_:design:weight:)` automatically selects Display
+//  vs Text based on the resolved point size, so we don't need to pick
+//  faces by hand — the design parameter only controls Default vs
+//  Rounded vs Mono.
 //
-//  Product ID: "com.plenty.app.pro" — one-time, non-consumable, $9.99.
-//  Configure in App Store Connect and Plenty.storekit (test config).
+//  Weight conventions (PRD §4.4):
+//    • Hero currency display          → .medium    (500)
+//    • Headlines and section titles   → .semibold  (600)
+//    • Body copy                      → .regular   (400)
+//    • Emphasis within body           → .medium    (500)
 //
-//  IMPORTANT: This module aliases StoreKit.Transaction as
-//  StoreTransaction throughout. The unqualified name `Transaction`
-//  inside the Plenty module resolves to our SwiftData @Model class,
-//  which has no `currentEntitlements` or `updates`. Always use
-//  `StoreTransaction` here.
+//  Never use weights below .regular or above .semibold in production.
+//
+//  All tokens are built on Dynamic Type text styles (`.title`, `.body`,
+//  `.footnote`, etc.) rather than fixed point sizes, so the type ramp
+//  scales fully with the user's preferred text size up to AX5 (PRD §4.4).
+//  Call sites that need fixed sizes (Hero number on Home) opt out
+//  locally with `.font(.system(size: 64, ...))`.
+//
+//  Migration path: any future custom typeface drops in here behind the
+//  same call-site API. No view code changes.
 //
 
-import Foundation
-import StoreKit
-import os
-import Observation
+import SwiftUI
 
-// Disambiguates StoreKit's Transaction from the project's SwiftData
-// @Model named Transaction. Only this file uses StoreKit's, so the
-// typealias is local-scoped intent.
-typealias StoreTransaction = StoreKit.Transaction
+// MARK: - Typography Namespace
 
-private let logger = Logger(subsystem: "com.plenty.app", category: "storekit")
+enum Typography {
 
-@Observable
-@MainActor
-final class StoreKitManager {
+    // MARK: Hero
 
-    // MARK: - Constants
-
-    static let proProductID = "com.plenty.app.pro"
-
-    // MARK: - State
-
-    /// The Pro product, loaded from the App Store. Nil while loading or
-    /// on failure. Views can read `formattedPrice` for display.
-    private(set) var proProduct: Product?
-
-    /// Whether the product load is in progress.
-    private(set) var isLoadingProduct = false
-
-    /// Whether a purchase is currently in flight.
-    private(set) var isPurchasing = false
-
-    /// Last error from a purchase or load attempt. Cleared on next success.
-    private(set) var lastError: Error?
-
-    /// Reference to AppState so this manager can flip isProUnlocked.
-    /// Set by Plenty.app via `attach(appState:)` after both objects exist.
-    private weak var appState: AppState?
-
-    // MARK: - Transaction Listener
-
-    private var transactionListener: Task<Void, Never>?
-
-    // MARK: - Init
-
-    init(appState: AppState? = nil) {
-        self.appState = appState
-        self.transactionListener = listenForTransactions()
+    /// Large rounded display used for inline currency editors and
+    /// secondary hero numerals. Approximately 28pt at default Dynamic
+    /// Type size, scales with the user's preferred text size.
+    /// Call sites: `CurrencyField`.
+    enum Hero {
+        static let compact: Font = .system(.title, design: .rounded, weight: .medium)
     }
 
-    deinit {
-        transactionListener?.cancel()
+    // MARK: Titles (SF Pro Display, semibold)
+
+    /// Section titles inside cards and sheets.
+    enum Title {
+        /// ~22pt at default Dynamic Type size. Used for prominent section
+        /// headers (e.g. Onboarding step titles).
+        static let medium: Font = .system(.title2, design: .default, weight: .semibold)
+        /// ~20pt at default Dynamic Type size. The workhorse section
+        /// header — used by Save, Trends, Outlook, Debt cards, etc.
+        static let small: Font = .system(.title3, design: .default, weight: .semibold)
     }
 
-    /// Set the AppState reference. Called once by PlentyApp after
-    /// both objects exist.
-    func attach(appState: AppState) {
-        self.appState = appState
+    // MARK: Body (SF Pro Text)
+
+    /// Body copy and list row primary text.
+    enum Body {
+        /// 17pt body. The default text style for paragraph copy and
+        /// transaction row names.
+        static let regular: Font = .system(.body, design: .default, weight: .regular)
+        /// 17pt medium. Use for emphasis within body — primary value
+        /// props, button labels, key callouts.
+        static let emphasis: Font = .system(.body, design: .default, weight: .medium)
     }
 
-    // MARK: - Public Surface
+    // MARK: Currency (SF Pro Rounded — currency only, per PRD §4.4)
 
-    /// Display price ("$9.99"). Falls back to a placeholder while loading.
-    var formattedPrice: String {
-        proProduct?.displayPrice ?? "$9.99"
+    /// Currency values inside list rows. Pairs naturally with
+    /// `.monospacedDigit()` at the call site for column alignment.
+    enum Currency {
+        static let row: Font = .system(.body, design: .rounded, weight: .medium)
     }
 
-    /// Load the Pro product from the App Store. Idempotent; safe to call
-    /// repeatedly (results cached after first success).
-    func loadProduct() async {
-        guard proProduct == nil else { return }
-        isLoadingProduct = true
-        defer { isLoadingProduct = false }
+    // MARK: Support (SF Pro Text — small)
 
-        do {
-            let products = try await Product.products(for: [Self.proProductID])
-            self.proProduct = products.first
-            if proProduct == nil {
-                logger.warning("Pro product not found in App Store response.")
-            }
-        } catch {
-            logger.error("Failed to load Pro product: \(error.localizedDescription)")
-            self.lastError = error
-        }
-    }
-
-    /// Check current entitlements at launch. Sets isProUnlocked if a
-    /// valid Pro purchase exists.
-    func refreshEntitlements() async {
-        for await result in StoreTransaction.currentEntitlements {
-            if case .verified(let transaction) = result,
-               transaction.productID == Self.proProductID,
-               transaction.revocationDate == nil {
-                appState?.isProUnlocked = true
-                return
-            }
-        }
-        // No valid entitlement found.
-        appState?.isProUnlocked = false
-    }
-
-    /// Initiate a purchase. Returns true on success.
-    @discardableResult
-    func purchasePro() async -> Bool {
-        guard let product = proProduct else {
-            logger.warning("purchasePro called before product loaded.")
-            await loadProduct()
-            guard proProduct != nil else { return false }
-            return await purchasePro()
-        }
-
-        isPurchasing = true
-        defer { isPurchasing = false }
-
-        do {
-            let result = try await product.purchase()
-
-            switch result {
-            case .success(let verification):
-                if case .verified(let transaction) = verification {
-                    appState?.isProUnlocked = true
-                    await transaction.finish()
-                    return true
-                } else {
-                    logger.warning("Purchase verification failed.")
-                    return false
-                }
-            case .userCancelled:
-                return false
-            case .pending:
-                // Parental approval, payment method action required, etc.
-                // Listener will pick it up when it resolves.
-                return false
-            @unknown default:
-                return false
-            }
-        } catch {
-            logger.error("Purchase failed: \(error.localizedDescription)")
-            self.lastError = error
-            return false
-        }
-    }
-
-    /// Restore previous purchases. Calls AppStore.sync() and re-checks
-    /// entitlements. Used by the "Restore Purchases" button.
-    @discardableResult
-    func restorePurchases() async -> Bool {
-        do {
-            try await AppStore.sync()
-            await refreshEntitlements()
-            return appState?.isProUnlocked ?? false
-        } catch {
-            logger.error("Restore failed: \(error.localizedDescription)")
-            self.lastError = error
-            return false
-        }
-    }
-
-    // MARK: - Transaction Listener
-
-    /// Long-running task that listens for transaction updates from
-    /// outside the app (refunds, family sharing changes, parental
-    /// approval completion).
-    private func listenForTransactions() -> Task<Void, Never> {
-        Task(priority: .background) { [weak self] in
-            for await result in StoreTransaction.updates {
-                guard let self else { return }
-                if case .verified(let transaction) = result,
-                   transaction.productID == Self.proProductID {
-                    let revoked = transaction.revocationDate != nil
-                    await MainActor.run {
-                        self.appState?.isProUnlocked = !revoked
-                    }
-                    await transaction.finish()
-                }
-            }
-        }
+    /// Secondary, label, and metadata copy.
+    enum Support {
+        /// ~13pt medium. Use for column headers and small label chips
+        /// where slight weight aids scanability.
+        static let label: Font = .system(.footnote, design: .default, weight: .medium)
+        /// ~13pt regular. Default for sub-row metadata, helper text,
+        /// and footer copy beneath inputs.
+        static let footnote: Font = .system(.footnote, design: .default, weight: .regular)
+        /// ~12pt regular. The smallest size used in the app — chart
+        /// axis labels, fine-print disclaimers, badge text.
+        static let caption: Font = .system(.caption, design: .default, weight: .regular)
     }
 }

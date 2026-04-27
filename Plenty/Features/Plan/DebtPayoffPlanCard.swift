@@ -8,9 +8,10 @@
 //  computed by DebtEngine. Each card shows total months to debt
 //  freedom and total interest paid.
 //
-//  v1 is informational only — the user picks a strategy mentally and
-//  pays accordingly. A polish phase can wire active strategy selection
-//  to bill order suggestions and the like.
+//  Replaces the prior DebtPayoffPlanCard. The card body is unchanged
+//  visually; the entire card now becomes a NavigationLink that pushes
+//  DebtPayoffView for the full planner. A subtle chevron at the top
+//  right signals the affordance.
 //
 
 import SwiftUI
@@ -46,49 +47,71 @@ struct DebtPayoffPlanCard: View {
         if !hasDebt {
             EmptyView()
         } else {
-            VStack(alignment: .leading, spacing: 16) {
-                header
+            NavigationLink {
+                DebtPayoffView()
+            } label: {
+                cardBody
+            }
+            .buttonStyle(.plain)
+        }
+    }
 
-                HStack(spacing: 12) {
-                    if let avalanche = avalanchePlan {
-                        strategyCard(
-                            title: "Avalanche",
-                            subtitle: "Highest APR first",
-                            plan: avalanche,
-                            recommended: avalanche.totalInterest <= (snowballPlan?.totalInterest ?? .greatestFiniteMagnitude)
-                        )
-                    }
+    private var cardBody: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            header
 
-                    if let snowball = snowballPlan {
-                        strategyCard(
-                            title: "Snowball",
-                            subtitle: "Smallest balance first",
-                            plan: snowball,
-                            recommended: false  // Avalanche always wins on interest; snowball wins on motivation
-                        )
-                    }
+            HStack(spacing: 12) {
+                if let avalanche = avalanchePlan {
+                    strategyCard(
+                        title: "Avalanche",
+                        subtitle: "Highest APR first",
+                        plan: avalanche,
+                        recommended: avalanche.totalInterest <= (snowballPlan?.totalInterest ?? .greatestFiniteMagnitude)
+                    )
                 }
 
-                explainer
+                if let snowball = snowballPlan {
+                    strategyCard(
+                        title: "Snowball",
+                        subtitle: "Smallest balance first",
+                        plan: snowball,
+                        recommended: false
+                    )
+                }
             }
-            .padding(20)
-            .background(
-                RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
-                    .fill(Theme.cardSurface)
-            )
+
+            explainer
         }
+        .padding(20)
+        .background(
+            RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
+                .fill(Theme.cardSurface)
+        )
     }
 
     // MARK: - Header
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Debt payoff")
-                .font(Typography.Title.small)
+        HStack(alignment: .top) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Debt payoff")
+                    .font(Typography.Title.small)
 
-            Text("Two ways to clear what you owe.")
-                .font(Typography.Support.footnote)
-                .foregroundStyle(.secondary)
+                Text("Two ways to clear what you owe.")
+                    .font(Typography.Support.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            HStack(spacing: 4) {
+                Text("Plan")
+                    .font(Typography.Support.footnote.weight(.semibold))
+                    .foregroundStyle(Theme.sage)
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Theme.sage)
+            }
         }
     }
 
@@ -121,14 +144,23 @@ struct DebtPayoffPlanCard: View {
                 .foregroundStyle(.secondary)
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(formattedDuration(plan.totalMonths))
-                    .font(.system(size: 20, weight: .bold, design: .rounded))
-                    .foregroundStyle(.primary)
+                if plan.isPayable {
+                    Text(formattedDuration(plan.totalMonths))
+                        .font(.system(size: 20, weight: .bold, design: .rounded))
+                        .foregroundStyle(.primary)
 
-                Text("\(plan.totalInterest.asPlainCurrency()) interest")
-                    .font(Typography.Support.footnote)
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
+                    Text("\(plan.totalInterest.asPlainCurrency()) interest")
+                        .font(Typography.Support.footnote)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                } else {
+                    Text("Needs more")
+                        .font(.system(size: 16, weight: .semibold, design: .rounded))
+                        .foregroundStyle(Theme.terracotta)
+                    Text("Adjust extra payment")
+                        .font(Typography.Support.footnote)
+                        .foregroundStyle(.secondary)
+                }
             }
             .padding(.top, 4)
         }
@@ -143,12 +175,10 @@ struct DebtPayoffPlanCard: View {
     // MARK: - Explainer
 
     private var explainer: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Avalanche minimizes interest. Snowball builds momentum by clearing small balances first. Both work; pick the one you'll actually stick with.")
-                .font(Typography.Support.footnote)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
+        Text("Avalanche minimizes interest. Snowball builds momentum by clearing small balances first. Both work; pick the one you'll actually stick with.")
+            .font(Typography.Support.footnote)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
     }
 
     // MARK: - Helpers
@@ -162,6 +192,8 @@ struct DebtPayoffPlanCard: View {
         return "\(years) yr \(remainder) mo"
     }
 }
+
+// MARK: - Local formatting
 
 private extension Decimal {
     func asPlainCurrency() -> String {

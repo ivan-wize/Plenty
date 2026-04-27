@@ -33,6 +33,8 @@ struct PlentyApp: App {
     @State private var notifications = NotificationManager()
     @State private var subscriptionReminders = SubscriptionReminderManager()
 
+    @State private var showOnboarding = false
+
     @AppStorage(AppearanceMode.storageKey) private var appearanceRaw = AppearanceMode.system.rawValue
 
     private let container: ModelContainer
@@ -58,6 +60,12 @@ struct PlentyApp: App {
                 .environment(notifications)
                 .environment(subscriptionReminders)
                 .preferredColorScheme(currentAppearance.colorScheme)
+                .fullScreenCover(isPresented: $showOnboarding) {
+                    OnboardingView()
+                }
+                .onAppear {
+                    showOnboarding = OnboardingView.shouldShow
+                }
                 .task {
                     // Cross-wire managers that need a reference to AppState.
                     // Done here (not in init) because @State property

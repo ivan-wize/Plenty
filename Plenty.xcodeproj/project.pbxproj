@@ -84,16 +84,7 @@
 		3BE7046D2F9EBE36006023F6 /* Exceptions for "PlentyWidget" folder in "PlentyWidgetExtension" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
-				Assets.xcassets,
 				Info.plist,
-				PlentyEntry.swift,
-				PlentyTimelineProvider.swift,
-				PlentyWidgetBundle.swift,
-				Views/CircularLockScreenView.swift,
-				Views/InlineLockScreenView.swift,
-				Views/MediumSpendableWidget.swift,
-				Views/RectangularLockScreenView.swift,
-				Views/SmallSpendableWidget.swift,
 			);
 			target = 3BE704332F9EBD94006023F6 /* PlentyWidgetExtension */;
 		};
@@ -116,6 +107,7 @@
 				Engine/DebtEngine.swift,
 				Engine/ExpenseCategorizer.swift,
 				Engine/IncomeEntryGenerator.swift,
+				Engine/NetWorthInsightEngine.swift,
 				Engine/PlentySnapshot.swift,
 				Engine/SubscriptionDetector.swift,
 				Engine/TransactionProjections.swift,
@@ -138,6 +130,41 @@
 			);
 			target = 3BE704722F9EBF6F006023F6 /* PlentyWatch Watch App */;
 		};
+		3BE704F12F9EC500006023F6 /* Exceptions for "Plenty" folder in "PlentyWidgetExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				App/ModelContainerFactory.swift,
+				DesignSystem/Theme.swift,
+				Engine/AccountDerivations.swift,
+				Engine/BudgetEngine.swift,
+				"Engine/BudgetEngine+Savings.swift",
+				Engine/BurnRate.swift,
+				Engine/DebtEngine.swift,
+				Engine/ExpenseCategorizer.swift,
+				Engine/IncomeEntryGenerator.swift,
+				Engine/NetWorthInsightEngine.swift,
+				Engine/PlentySnapshot.swift,
+				Engine/SubscriptionDetector.swift,
+				Engine/TransactionProjections.swift,
+				Models/Account.swift,
+				Models/AccountBalance.swift,
+				Models/AccountCategory.swift,
+				Models/IncomeSource.swift,
+				Models/RecurringRule.swift,
+				Models/SavingsGoal.swift,
+				Models/SavingsGoalType.swift,
+				Models/SpendingLimit.swift,
+				Models/Subscription.swift,
+				Models/Transaction.swift,
+				Models/TransactionCategory.swift,
+				Models/TransactionKind.swift,
+				"Utilities/Calendar+Helpers.swift",
+				"Utilities/Decimal+Currency.swift",
+				"Utilities/Int+Ordinal.swift",
+				"Utilities/ModelContext+SafeSave.swift",
+			);
+			target = 3BE704332F9EBD94006023F6 /* PlentyWidgetExtension */;
+		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -146,6 +173,7 @@
 			exceptions = (
 				3BE704952F9EC48E006023F6 /* Exceptions for "Plenty" folder in "Plenty" target */,
 				3BE704F02F9EC500006023F6 /* Exceptions for "Plenty" folder in "PlentyWatch Watch App" target */,
+				3BE704F12F9EC500006023F6 /* Exceptions for "Plenty" folder in "PlentyWidgetExtension" target */,
 			);
 			path = Plenty;
 			sourceTree = "<group>";

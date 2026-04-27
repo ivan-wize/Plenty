@@ -5,12 +5,18 @@
 //  Target path: Plenty/Features/Accounts/SubscriptionsListView.swift
 //
 //  Lists subscriptions grouped:
-//    • Tracked (state == .confirmed)
-//    • Suggested (state == .suggested) — populated by Phase 7 detection
+//    • Tracked   (state == .confirmed)
+//    • Suggested (state == .suggested) — populated by detection
 //
 //  Header shows the annualized cost across all tracked subscriptions.
 //  Tap a row toggles its isMarkedToCancel flag. Swipe to delete.
 //  Toolbar Add for manual entry.
+//
+//  Replaces the prior SubscriptionsListView. One change: when there are
+//  3+ suggestions, the Suggested section now leads with a NavigationLink
+//  to SubscriptionSuggestionsView — the focused review screen with
+//  detection rationale per row. The inline rows still appear underneath,
+//  so users can act on one or two without needing to push.
 //
 
 import SwiftUI
@@ -38,6 +44,10 @@ struct SubscriptionsListView: View {
     private var totalMonthly: Decimal {
         tracked.reduce(Decimal.zero) { $0 + $1.monthlyCost }
     }
+
+    /// Threshold above which the inline list gets a "Review all" push
+    /// link. Below this, the inline rows are enough.
+    private let focusedReviewThreshold = 3
 
     // MARK: - Body
 
@@ -83,6 +93,21 @@ struct SubscriptionsListView: View {
 
                     if !suggested.isEmpty {
                         Section("Suggested") {
+                            if suggested.count >= focusedReviewThreshold {
+                                NavigationLink {
+                                    SubscriptionSuggestionsView()
+                                } label: {
+                                    HStack {
+                                        Image(systemName: "list.bullet.rectangle")
+                                            .foregroundStyle(Theme.sage)
+                                            .symbolRenderingMode(.hierarchical)
+                                        Text("Review all \(suggested.count) suggestions")
+                                            .font(Typography.Body.regular)
+                                            .foregroundStyle(Theme.sage)
+                                    }
+                                }
+                            }
+
                             ForEach(suggested) { sub in
                                 SubscriptionRow(
                                     subscription: sub,
@@ -142,6 +167,8 @@ struct SubscriptionsListView: View {
         try? modelContext.save()
     }
 }
+
+// MARK: - Local formatting
 
 private extension Decimal {
     func asPlainCurrency() -> String {
