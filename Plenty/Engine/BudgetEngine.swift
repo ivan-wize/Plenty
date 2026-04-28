@@ -4,33 +4,32 @@
 //
 //  Target path: Plenty/Engine/BudgetEngine.swift
 //
-//  The central calculation engine. Pure functions in, pure value types
-//  out. Every view and every widget that shows the hero number goes
-//  through this engine. If the number is wrong anywhere in the app,
-//  it's wrong here.
+//  Phase 1 (v2): produces `monthlyBudgetRemaining` alongside the v1
+//  `spendable` number. Both fields populate the returned snapshot;
+//  Plan-tab features (Outlook, Save, Trends, Net Worth detail) keep
+//  reading the v1 fields, while v2 views (Overview, widgets after P8,
+//  Watch after P8) read the new field.
 //
-//  Plenty's hero formula (refined from Left's per Phase 0 Decision 3.2):
+//  v2 hero formula (PDS §2):
+//
+//      monthlyBudgetRemaining =
+//          confirmedIncome (this month)
+//        − billsTotal      (paid + unpaid this month)
+//        − expensesThisMonth
+//
+//  v1 cash-based formula (retained for legacy consumers):
 //
 //      spendable =
 //          cashAccountsTotal
-//        − billsRemaining (this month, unpaid)
+//        − billsRemaining (this month, unpaid only)
 //        − statementBalanceDueBeforeNextIncome (credit cards only)
 //        − plannedSavingsRemaining
-//
-//  Key difference from Left: we subtract the credit card STATEMENT
-//  balance due before the next income event, not the full outstanding
-//  balance. Revolving balances the user is paying down over time stay
-//  tracked as debt (on the Accounts tab and debt payoff view) but do
-//  not enter the hero.
 //
 //  Falls back gracefully when data is missing:
 //    • No statementBalance on a card   → no subtraction for that card
 //    • No nextIncomeDate               → all statements due this month subtract
 //    • No savingsGoals                 → no savings subtraction
 //    • Goal with no monthlyContribution → contributes 0 to planned savings
-//
-//  Replaces the prior BudgetEngine. One change: the planned-savings
-//  sum now treats `monthlyContribution` as optional, defaulting to 0.
 //
 
 import Foundation
@@ -51,8 +50,8 @@ enum BudgetEngine {
     ) -> PlentySnapshot {
 
         // ---------- Cash position ----------
-        let cashTotal = AccountDerivations.cashAccountsTotal(accounts)
-        let ccDebt = AccountDerivations.creditCardDebt(accounts)
+        let cashTotal  = AccountDerivations.cashAccountsTotal(accounts)
+        let ccDebt     = AccountDerivations.creditCardDebt(accounts)
         let cashOnHand = AccountDerivations.cashOnHand(accounts)
 
         // ---------- This month's transactions ----------
@@ -91,7 +90,7 @@ enum BudgetEngine {
             planned: plannedSavings, actual: actualSavings
         )
 
-        // ---------- Spendable (the hero number) ----------
+        // ---------- v1 Hero: Spendable (cash-based) ----------
         let spendable = roundCents(
             cashTotal
             - billsRemaining
@@ -99,7 +98,18 @@ enum BudgetEngine {
             - savingsRemaining
         )
 
-        // ---------- Breakdown + pace ----------
+        // ---------- v2 Hero: Monthly Budget Remaining (envelope-based) ----------
+        //
+        // Per PDS §2: confirmedIncome − billsTotal − expensesTotal.
+        // Note: bills enter at FULL total (paid + unpaid). Paying a
+        // bill is bookkeeping; it doesn't change the math. Expected
+        // (unconfirmed) income does NOT enter — it's surfaced via the
+        // Overview projection line.
+        let monthlyBudgetRemaining = roundCents(
+            confirmedIncome - billsTotal - expensesTotal
+        )
+
+        // ---------- Breakdown + counts + pace ----------
         let breakdown = TransactionProjections.categoryBreakdown(
             bills: monthBills, expenses: monthExpenses
         )
@@ -143,74 +153,88 @@ enum BudgetEngine {
             billsTotalCount: monthBills.count,
             incomeConfirmedCount: confirmedCount,
             incomeTotalCount: monthIncome.count,
-            expensesByCategory: breakdown
+            expensesByCategory: breakdown,
+            monthlyBudgetRemaining: monthlyBudgetRemaining
         )
     }
 
-    // MARK: - Statement Balance Logic (Phase 0 Decision 3.2)
+    // MARK: - Statement Balance Logic
 
-    /// Sum of credit card statement balances that are due before the next
-    /// income event. Only cards with BOTH statementBalance and statementDay
-    /// set contribute; cards with missing data contribute zero (the user
-    /// hasn't told us what's due, so we don't guess).
+    /// Sum of credit card statement balances that are due before the
+    /// next income event. Only cards with BOTH statementBalance and
+    /// statementDay set contribute; cards with missing data contribute
+    /// zero (the user hasn't told us what's due, so we don't guess).
     ///
-    /// If nextIncomeDate is nil (no more income expected this month), all
-    /// cards with a statement due on or before the end of this month
-    /// contribute. This matches the intuition that "if no income is
-    /// coming, you need to cover everything due."
+    /// If nextIncomeDate is nil (no more income expected this month),
+    /// all cards with a statement due on or before the end of this
+    /// month contribute.
     static func statementBalanceDueBeforeNextIncome(
         accounts: [Account],
         nextIncomeDate: Date?,
         reference: Date = .now,
         calendar: Calendar = .current
     ) -> Decimal {
-        let creditCards = AccountDerivations.creditAccounts(accounts)
+        let creditCards = accounts.filter { $0.kind == .credit && $0.isActive }
 
-        // Window end: either next income date, or end of current month.
-        let windowEnd: Date = {
-            if let nextIncomeDate { return nextIncomeDate }
-            return calendar.endOfMonth(for: reference)
-        }()
-
-        var total: Decimal = 0
-
+        var total = Decimal.zero
         for card in creditCards {
-            guard let statementDay = card.statementDay,
-                  let statementBalance = card.statementBalance,
-                  statementBalance > 0
+            guard
+                let statementBalance = card.statementBalance,
+                statementBalance > 0,
+                let statementDay = card.statementDay
             else { continue }
 
-            // Compute the next statementDay occurrence on or after reference.
-            guard let nextStatement = nextOccurrence(
-                ofDayOfMonth: statementDay,
-                on: reference,
+            // The next due date for this card.
+            guard let dueDate = nextStatementDueDate(
+                day: statementDay,
+                reference: reference,
                 calendar: calendar
             ) else { continue }
 
-            if nextStatement <= windowEnd {
+            // Compare against next income (or end of month if none).
+            let cutoff: Date
+            if let nextIncomeDate {
+                cutoff = nextIncomeDate
+            } else if let endOfMonth = calendar.endOfMonth(for: reference) {
+                cutoff = endOfMonth
+            } else {
+                continue
+            }
+
+            if dueDate <= cutoff {
                 total += statementBalance
             }
         }
-
         return roundCents(total)
     }
 
-    /// Next date with the given day-of-month on or after `reference`.
-    private static func nextOccurrence(
-        ofDayOfMonth day: Int,
-        on reference: Date,
+    /// Next occurrence of a given day-of-month, on or after `reference`.
+    /// Wraps to next month when `reference`'s day is past the target.
+    private static func nextStatementDueDate(
+        day: Int,
+        reference: Date,
         calendar: Calendar
     ) -> Date? {
-        var comps = calendar.dateComponents([.year, .month], from: reference)
-        comps.day = min(day, calendar.range(of: .day, in: .month, for: reference)?.count ?? day)
-        guard let thisMonth = calendar.date(from: comps) else { return nil }
+        let comps = calendar.dateComponents([.year, .month, .day], from: reference)
+        guard let currentDay = comps.day,
+              let currentMonth = comps.month,
+              let currentYear = comps.year
+        else { return nil }
 
-        if thisMonth >= calendar.startOfDay(for: reference) {
-            return thisMonth
+        var thisMonthComps = DateComponents()
+        thisMonthComps.year = currentYear
+        thisMonthComps.month = currentMonth
+        thisMonthComps.day = day
+
+        if day >= currentDay,
+           let date = calendar.date(from: thisMonthComps) {
+            return date
         }
 
-        // This month's occurrence has passed; roll to next month.
-        guard let nextMonthDate = calendar.date(byAdding: .month, value: 1, to: thisMonth),
+        // Day already passed this month → next month, clamped to month length.
+        guard let thisMonth = calendar.date(from: DateComponents(
+            year: currentYear, month: currentMonth, day: 1)),
+              let nextMonthDate = calendar.date(byAdding: .month, value: 1, to: thisMonth),
               let nextMonthRange = calendar.range(of: .day, in: .month, for: nextMonthDate)
         else { return nil }
 
@@ -246,6 +270,43 @@ enum BudgetEngine {
             )
             if snapshot.totalIncome > 0 || snapshot.expensesThisMonth > 0 {
                 totals.append(snapshot.spendable)
+            }
+        }
+
+        guard !totals.isEmpty else { return 0 }
+        let sum = totals.reduce(Decimal.zero, +)
+        let average = NSDecimalNumber(decimal: sum)
+            .dividing(by: NSDecimalNumber(value: totals.count))
+            .decimalValue
+        return roundCents(average)
+    }
+
+    /// Average monthly budget remaining (v2) over the last N months.
+    /// Companion to `averageSpendable` for v2 insights surfaces.
+    static func averageMonthlyBudgetRemaining(
+        accounts: [Account],
+        transactions: [Transaction],
+        savingsGoals: [SavingsGoal] = [],
+        lookbackMonths: Int = 3,
+        reference: Date = .now,
+        calendar: Calendar = .current
+    ) -> Decimal {
+        var totals: [Decimal] = []
+
+        for offset in stride(from: -lookbackMonths, through: -1, by: 1) {
+            guard let date = calendar.date(byAdding: .month, value: offset, to: reference) else { continue }
+            let m = calendar.component(.month, from: date)
+            let y = calendar.component(.year, from: date)
+
+            let snapshot = calculate(
+                accounts: accounts,
+                transactions: transactions,
+                savingsGoals: savingsGoals,
+                month: m,
+                year: y
+            )
+            if snapshot.totalIncome > 0 || snapshot.expensesThisMonth > 0 {
+                totals.append(snapshot.monthlyBudgetRemaining)
             }
         }
 

@@ -4,25 +4,36 @@
 //
 //  Target path: Plenty/Engine/PlentySnapshot.swift
 //
-//  A point-in-time reading of the user's financial position, produced by
-//  BudgetEngine.calculate(). Pure Sendable value type with no SwiftData
-//  dependency so it flows through views, widgets, watch, and intents.
+//  Phase 1 (v2): adds `monthlyBudgetRemaining` (the new hero number)
+//  alongside the v1 fields used by Plan-tab features.
 //
-//  Renamed from Left's LeftSnapshot. The hero number field is renamed
-//  from `left` to `spendable` to match Plenty's possession-leading voice
-//  ("You have $1,840 spendable").
+//  A point-in-time reading of the user's financial position, produced
+//  by BudgetEngine.calculate(). Pure Sendable value type with no
+//  SwiftData dependency so it flows through views, widgets, watch, and
+//  intents.
 //
-//  Hero formula per PRD §9.1 (refined by Phase 0 Decision 3.2):
+//  v2 hero formula (PDS §2):
 //
-//      spendable =
-//        cashOnHand
-//        − billsRemaining (this month, unpaid)
-//        − statementBalanceDueBeforeNextIncome (credit cards only)
-//        − plannedSavingsRemaining
+//      monthlyBudgetRemaining =
+//          confirmedIncome (this month)
+//        − billsTotal      (paid + unpaid this month)
+//        − expensesThisMonth
 //
-//  NOTE: full credit card balance does not enter the hero. Revolving
-//  balances are tracked as debt on the Accounts tab and powered by the
-//  Debt Payoff view; they do not bleed into "what can I spend today."
+//  Negative when over-budget. Early in a month, before paychecks have
+//  confirmed, this can read negative. The Overview tab shows a small
+//  secondary line ("+ $X expected this month") so users see the
+//  forward shape.
+//
+//  All v1 fields stay populated. Plan-tab features (Outlook, Save,
+//  Trends, Net Worth detail) still consume `spendable`, `cashOnHand`,
+//  `statementDueBeforeNextIncome`, savings totals, and burn rates. v2
+//  views read `monthlyBudgetRemaining` and the v2 alias accessors at
+//  the bottom of this file.
+//
+//  Naming aliases on this struct (`confirmedIncomeThisMonth`,
+//  `expectedIncomeRemaining`, `billsThisMonth`) are zero-cost computed
+//  properties; they exist purely to make v2 call sites read clearly
+//  without forcing the underlying field rename.
 //
 
 import Foundation
@@ -31,30 +42,40 @@ import Foundation
 
 struct PlentySnapshot: Equatable, Sendable {
 
-    // MARK: - The Hero Number
+    // MARK: - The Hero Number (v2)
 
-    /// What the user can safely spend right now.
-    /// Formula: cashOnHand − billsRemaining − statementDueBeforeNextIncome − plannedSavingsRemaining.
-    /// May be negative (over-committed).
+    /// **The Overview hero in v2.** Money still in the user's monthly
+    /// envelope: confirmed income minus all bills (paid + unpaid)
+    /// minus expenses logged this month.
+    ///
+    /// May be negative (typical early in a month before paychecks
+    /// confirm). The Overview's projection line shows expected income
+    /// still to come, providing forward context.
+    let monthlyBudgetRemaining: Decimal
+
+    // MARK: - Legacy Hero (v1, retained for Plan-tab Pro features)
+
+    /// v1 cash-based "spendable" number. Retained because Plan-tab
+    /// features (Outlook projections, Net Worth detail) and existing
+    /// widgets / Watch / intents still consume it. New v2 view code
+    /// should prefer `monthlyBudgetRemaining`.
     let spendable: Decimal
 
     // MARK: - Cash Position
 
     /// Cash accounts total minus credit card debt. "The real money you
-    /// have." Note: uses FULL credit card balance here because cashOnHand
-    /// is net worth-adjacent; the hero uses statement balance instead.
+    /// have." Used by Plan-tab Net Worth surfaces.
     let cashOnHand: Decimal
 
     /// Sum of all cash/checking/savings balances (positive).
     let cashAccountsTotal: Decimal
 
-    /// Sum of all credit card balances owed (positive). This is the
-    /// full outstanding balance, used by cashOnHand and Net Worth.
+    /// Sum of all credit card balances owed (positive). Full
+    /// outstanding balance (not statement balance).
     let creditCardDebt: Decimal
 
-    /// Sum of credit card statement balances due before the next income
-    /// event (positive). This is what the hero subtracts. Falls back to
-    /// zero when no cards have statementBalance set.
+    /// Sum of credit card statement balances due before the next
+    /// income event. Powers Outlook's near-term cash flow.
     let statementDueBeforeNextIncome: Decimal
 
     // MARK: - Commitments This Month
@@ -62,24 +83,34 @@ struct PlentySnapshot: Equatable, Sendable {
     /// Sum of unpaid bills' amounts this month.
     let billsRemaining: Decimal
 
-    /// Sum of all bills this month, paid + unpaid.
+    /// Sum of all bills this month, paid + unpaid. **This is what v2's
+    /// hero formula subtracts.** Surfaced as `billsThisMonth` for
+    /// readability in v2 code.
     let billsTotal: Decimal
 
     /// Sum of bills already paid this month.
     let billsPaid: Decimal
 
-    /// Actual spending this month (expenses, not bills). Not subtracted
-    /// from spendable (it already reduced cash). Reported for context.
+    /// Actual spending this month (expenses, not bills). v2's hero
+    /// formula subtracts this directly.
     let expensesThisMonth: Decimal
 
     // MARK: - Income This Month
 
+    /// Confirmed (received) income this month. v2's hero formula adds
+    /// this. Surfaced as `confirmedIncomeThisMonth` in v2 code.
     let confirmedIncome: Decimal
+
+    /// Expected (not yet confirmed) income this month. Surfaced as
+    /// `expectedIncomeRemaining` since confirmed entries flip out of
+    /// `.expected` status. Powers the Overview projection line.
     let expectedIncome: Decimal
+
+    /// Confirmed + expected.
     let totalIncome: Decimal
 
-    /// Date of the next scheduled income arrival. Nil if none this month
-    /// or if all income is already confirmed.
+    /// Date of the next scheduled income arrival. Nil if none this
+    /// month or if all income is already confirmed.
     let nextIncomeDate: Date?
 
     // MARK: - Savings
@@ -87,8 +118,10 @@ struct PlentySnapshot: Equatable, Sendable {
     let plannedSavingsThisMonth: Decimal
     let actualSavingsThisMonth: Decimal
 
-    /// Remaining planned savings; subtracted from spendable so the user
-    /// doesn't spend money they've committed to save.
+    /// Remaining planned savings; subtracted from v1 `spendable` so the
+    /// user doesn't dip into committed savings. **Not** subtracted
+    /// from `monthlyBudgetRemaining` in v2 (savings goals are tracked
+    /// in Plan/Save, not in the envelope math).
     let plannedSavingsRemaining: Decimal
 
     // MARK: - Pace
@@ -96,9 +129,10 @@ struct PlentySnapshot: Equatable, Sendable {
     /// 30-day rolling discretionary spend rate, per day.
     let smoothedDailyBurn: Decimal
 
-    /// Per-day room to spend for the rest of the month: spendable ÷ days
-    /// remaining. Nil when the target month isn't current, or when
-    /// spendable is non-positive.
+    /// Per-day room to spend for the rest of the month based on v1
+    /// `spendable`. Nil when not the current month, or when spendable
+    /// is non-positive. Plan-tab feature; v2 Overview uses
+    /// `BurnRate.monthEndProjection` for its own optional forecast.
     let sustainableDailyBurn: Decimal?
 
     // MARK: - Counts
@@ -120,13 +154,33 @@ struct PlentySnapshot: Equatable, Sendable {
 
     let expensesByCategory: [CategoryBreakdown]
 
-    // MARK: - Derived Health
+    // MARK: - v2 Naming Aliases
 
-    /// Allocation ratio for state classification, 0.0-1.0+.
+    /// v2 alias for `confirmedIncome`. Reads as: "confirmed income
+    /// for this month."
+    var confirmedIncomeThisMonth: Decimal { confirmedIncome }
+
+    /// v2 alias for `expectedIncome`. Reads as: "income still expected
+    /// to confirm this month." Confirmed entries flip out of
+    /// `.expected` status, so this naturally shrinks as paychecks land.
+    var expectedIncomeRemaining: Decimal { expectedIncome }
+
+    /// v2 alias for `billsTotal`. Reads as: "bills for this month
+    /// (paid + unpaid)."
+    var billsThisMonth: Decimal { billsTotal }
+
+    /// True when the v2 hero is below zero. Drives Overview's
+    /// terracotta hero color.
+    var monthlyBudgetIsNegative: Bool { monthlyBudgetRemaining < 0 }
+
+    // MARK: - Derived Health (v1)
+
+    /// Allocation ratio for v1 zone classification, 0.0-1.0+.
     var allocationProgress: Double {
         let inflow = cashOnHand + totalIncome
         guard inflow > 0 else { return 0 }
-        let committed = billsRemaining + statementDueBeforeNextIncome + plannedSavingsRemaining + expensesThisMonth
+        let committed = billsRemaining + statementDueBeforeNextIncome
+            + plannedSavingsRemaining + expensesThisMonth
         return NSDecimalNumber(decimal: committed)
             .dividing(by: NSDecimalNumber(decimal: inflow))
             .doubleValue
@@ -172,6 +226,65 @@ struct PlentySnapshot: Equatable, Sendable {
         return .safe
     }
 
+    // MARK: - Init
+    //
+    // `monthlyBudgetRemaining` defaults to 0 so existing call sites
+    // (PlentySnapshot.empty, SwiftUI preview helpers, widget
+    // placeholders) compile without modification. BudgetEngine.calculate
+    // always passes the real value.
+
+    init(
+        spendable: Decimal,
+        cashOnHand: Decimal,
+        cashAccountsTotal: Decimal,
+        creditCardDebt: Decimal,
+        statementDueBeforeNextIncome: Decimal,
+        billsRemaining: Decimal,
+        billsTotal: Decimal,
+        billsPaid: Decimal,
+        expensesThisMonth: Decimal,
+        confirmedIncome: Decimal,
+        expectedIncome: Decimal,
+        totalIncome: Decimal,
+        nextIncomeDate: Date?,
+        plannedSavingsThisMonth: Decimal,
+        actualSavingsThisMonth: Decimal,
+        plannedSavingsRemaining: Decimal,
+        smoothedDailyBurn: Decimal,
+        sustainableDailyBurn: Decimal?,
+        billsPaidCount: Int,
+        billsTotalCount: Int,
+        incomeConfirmedCount: Int,
+        incomeTotalCount: Int,
+        expensesByCategory: [CategoryBreakdown],
+        monthlyBudgetRemaining: Decimal = 0
+    ) {
+        self.spendable = spendable
+        self.cashOnHand = cashOnHand
+        self.cashAccountsTotal = cashAccountsTotal
+        self.creditCardDebt = creditCardDebt
+        self.statementDueBeforeNextIncome = statementDueBeforeNextIncome
+        self.billsRemaining = billsRemaining
+        self.billsTotal = billsTotal
+        self.billsPaid = billsPaid
+        self.expensesThisMonth = expensesThisMonth
+        self.confirmedIncome = confirmedIncome
+        self.expectedIncome = expectedIncome
+        self.totalIncome = totalIncome
+        self.nextIncomeDate = nextIncomeDate
+        self.plannedSavingsThisMonth = plannedSavingsThisMonth
+        self.actualSavingsThisMonth = actualSavingsThisMonth
+        self.plannedSavingsRemaining = plannedSavingsRemaining
+        self.smoothedDailyBurn = smoothedDailyBurn
+        self.sustainableDailyBurn = sustainableDailyBurn
+        self.billsPaidCount = billsPaidCount
+        self.billsTotalCount = billsTotalCount
+        self.incomeConfirmedCount = incomeConfirmedCount
+        self.incomeTotalCount = incomeTotalCount
+        self.expensesByCategory = expensesByCategory
+        self.monthlyBudgetRemaining = monthlyBudgetRemaining
+    }
+
     // MARK: - Empty
 
     static let empty = PlentySnapshot(
@@ -197,7 +310,8 @@ struct PlentySnapshot: Equatable, Sendable {
         billsTotalCount: 0,
         incomeConfirmedCount: 0,
         incomeTotalCount: 0,
-        expensesByCategory: []
+        expensesByCategory: [],
+        monthlyBudgetRemaining: 0
     )
 }
 

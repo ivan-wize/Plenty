@@ -4,6 +4,9 @@
 //
 //  Target path: Plenty/Models/IncomeSource.swift
 //
+//  Phase 0 (v2): adds `rolloverEnabled` to control whether this template
+//  auto-materializes entries in future months.
+//
 //  A template describing a recurring income stream. The user names it
 //  ("Paycheck," "Rental income"), sets an expected amount, picks a
 //  frequency, and optionally designates a destination cash account.
@@ -12,11 +15,14 @@
 //  records of kind .income with status .expected for the current month.
 //  Users confirm or skip each entry as paychecks actually arrive.
 //
-//  Replaces the prior IncomeSource. One change: `init` now takes
-//  `IncomeSource.Frequency` (the cohesive type) instead of
-//  `RecurringRule.Frequency`. AddIncomeSheet was already passing
-//  `IncomeSource.Frequency`; the prior signature was a hidden type
-//  mismatch.
+//  v2 change — `rolloverEnabled` (default true):
+//    • true  → IncomeEntryGenerator auto-materializes entries each
+//              month (current behavior).
+//    • false → the template is dormant; the user opts in per-month via
+//              "Copy from previous month" on the Income tab.
+//
+//  This lets users keep a template for unstable income (freelance, gig)
+//  without the forecast cluttering their projection line.
 //
 
 import Foundation
@@ -57,6 +63,16 @@ final class IncomeSource {
     /// no new expected entries but preserve their history.
     var isActive: Bool = false
 
+    /// v2 — whether this template auto-materializes entries when a new
+    /// month begins. Default true. When false, the user must use
+    /// "Copy from previous month" on the Income tab to bring entries
+    /// into the current month manually.
+    ///
+    /// Optional in storage so existing records (none, since v1
+    /// unreleased) and CloudKit syncs without the field present default
+    /// to true.
+    var rolloverEnabled: Bool = true
+
     // MARK: - Metadata
 
     var createdAt: Date = Date()
@@ -72,7 +88,8 @@ final class IncomeSource {
         secondDayOfMonth: Int? = nil,
         weekday: Int = 5,
         biweeklyAnchor: Date? = nil,
-        isActive: Bool = true
+        isActive: Bool = true,
+        rolloverEnabled: Bool = true
     ) {
         self.id = UUID()
         self.name = name
@@ -83,6 +100,7 @@ final class IncomeSource {
         self.weekday = weekday
         self.biweeklyAnchor = biweeklyAnchor
         self.isActive = isActive
+        self.rolloverEnabled = rolloverEnabled
         self.createdAt = .now
         self.updatedAt = .now
     }
@@ -103,24 +121,14 @@ final class IncomeSource {
         var displayName: String {
             switch self {
             case .weekly:      return "Weekly"
-            case .biweekly:    return "Biweekly"
-            case .semimonthly: return "Twice a Month"
+            case .biweekly:    return "Every two weeks"
+            case .semimonthly: return "Twice a month"
             case .monthly:     return "Monthly"
-            }
-        }
-
-        var asRecurringRuleFrequency: RecurringRule.Frequency {
-            switch self {
-            case .weekly:      return .weekly
-            case .biweekly:    return .biweekly
-            case .semimonthly: return .semimonthly
-            case .monthly:     return .monthly
             }
         }
     }
 
-    // MARK: - Computed
-
+    /// Type-safe accessor for the stored raw frequency.
     var frequency: Frequency {
         get { Frequency(rawValue: frequencyRaw) ?? .biweekly }
         set { frequencyRaw = newValue.rawValue }

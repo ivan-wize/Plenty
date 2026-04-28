@@ -4,21 +4,20 @@
 //
 //  Target path: Plenty/App/AppState.swift
 //
-//  Phase 1: selectedTab, install date.
-//  Phase 5: pendingAddSheet enum.
-//  Phase 6: isProUnlocked.
-//  Phase 10: + lastError for app-level error banner.
+//  Phase 0 (v2): clean four-tab enum, no legacy cases.
 //
-//  IMPORTANT: PendingAddSheet is NOT Sendable. Several cases hold
-//  references to SwiftData @Model classes (Transaction, Account,
-//  SavingsGoal), which are MainActor-isolated and not Sendable. The
-//  whole AppState is @MainActor so this is safe — the enum never
-//  crosses isolation domains in practice.
+//  v1 was never released, so this rewrites the Tab enum directly to the
+//  final four-tab shape: overview / income / expenses / plan. Settings
+//  is no longer a tab — it opens as a sheet from OverviewTopBar (P3).
 //
-//  Equatable is implemented manually because synthesized Equatable on
-//  enum cases that hold SwiftData model references can match by
-//  reference identity in surprising ways. We compare by `id` so two
-//  fetches of the same record compare equal.
+//  Tab icons follow PDS §3:
+//    • Overview → "circle.grid.2x2"      (proposed; final call open)
+//    • Income   → "arrow.down.circle"
+//    • Expenses → "arrow.up.circle"
+//    • Plan     → "chart.line.uptrend.xyaxis"
+//
+//  PendingAddSheet is unchanged — every case is still reachable from
+//  the FAB menu (Overview), per-tab toolbars, or App Intents.
 //
 
 import Foundation
@@ -31,30 +30,30 @@ final class AppState {
     // MARK: - Tab
 
     enum Tab: String, CaseIterable, Identifiable, Sendable {
-        case home, accounts, plan, settings
+        case overview, income, expenses, plan
 
         var id: String { rawValue }
 
         var title: String {
             switch self {
-            case .home:     return "Home"
-            case .accounts: return "Accounts"
+            case .overview: return "Overview"
+            case .income:   return "Income"
+            case .expenses: return "Expenses"
             case .plan:     return "Plan"
-            case .settings: return "Settings"
             }
         }
 
         var systemImage: String {
             switch self {
-            case .home:     return "house"
-            case .accounts: return "creditcard.and.123"
+            case .overview: return "circle.grid.2x2"
+            case .income:   return "arrow.down.circle"
+            case .expenses: return "arrow.up.circle"
             case .plan:     return "chart.line.uptrend.xyaxis"
-            case .settings: return "gearshape"
             }
         }
     }
 
-    var selectedTab: Tab = .home
+    var selectedTab: Tab = .overview
 
     // MARK: - Install Date
 
@@ -73,13 +72,13 @@ final class AppState {
 
     var isProUnlocked: Bool = false
 
-    // MARK: - Last Error (Phase 10)
+    // MARK: - Last Error
 
     /// The most recent app-level error worth surfacing to the user.
-    /// Set by services (CloudKitSyncMonitor, save handlers, etc.)
-    /// when something went wrong that needs user awareness. Cleared
-    /// by ErrorBanner when the user dismisses it, or automatically
-    /// by services when the underlying issue resolves.
+    /// Set by services (CloudKitSyncMonitor, save handlers, etc.) when
+    /// something went wrong that needs user awareness. Cleared by
+    /// ErrorBanner when the user dismisses it, or automatically by
+    /// services when the underlying issue resolves.
     var lastError: PlentyError?
 
     // MARK: - Pending Add Sheet
@@ -139,4 +138,10 @@ final class AppState {
             }
         }
     }
+
+    // MARK: - Settings Sheet (P3 hookup)
+
+    /// Whether the Settings sheet is currently presented. Set true by
+    /// OverviewTopBar's gear button (P3); presented by RootView.
+    var showingSettingsSheet: Bool = false
 }

@@ -1,71 +1,79 @@
 //
-//  SettingsTab.swift
+//  SettingsView.swift
 //  Plenty
 //
-//  Target path: Plenty/Features/Settings/SettingsTab.swift
+//  Target path: Plenty/Features/Settings/SettingsView.swift
 //
-//  Replaces the prior SettingsTab to include two new sections:
+//  Phase 0 (v2): renamed from SettingsTab.swift. Ready for sheet
+//  presentation from OverviewTopBar's gear button (wired in P3).
 //
-//    • PlentyProSection      — surfaces Pro state, restore flow
-//    • PrivacyAndDataSection — restates the privacy promise and
-//                              provides the destructive Erase button
+//  Changes from v1:
+//    • No longer a tab — RootView presents this in a NavigationStack
+//      sheet when AppState.showingSettingsSheet is true.
+//    • IncomeSourcesView reference removed — income management lives
+//      in the Income tab now (P4).
+//    • Toolbar gets a Done button to dismiss the sheet.
 //
-//  Section order, top to bottom: Plenty Pro (most prominent for the
-//  monetization gate), Notifications (functional toggles), Financial
-//  Data (CSV + income sources), Appearance, Privacy & Data, About.
-//
-//  Privacy comes near the bottom because it's a "trust restate"
-//  rather than a daily action. About sits last as the least
-//  frequently visited.
+//  Sections retained in v2:
+//    • Appearance
+//    • Notifications
+//    • Plenty Pro (purchase / restore)
+//    • Import (CSV)
+//    • Privacy & Data
+//    • About
 //
 
 import SwiftUI
 
-struct SettingsTab: View {
+struct SettingsView: View {
 
-    @State private var showingImport = false
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var showingImportSheet = false
 
     var body: some View {
-        NavigationStack {
-            Form {
-                PlentyProSection()
+        Form {
+            AppearanceSection()
+            NotificationsSection()
+            PlentyProSection()
 
-                NotificationsSection()
-
-                financialDataSection
-
-                AppearanceSection()
-
-                PrivacyAndDataSection()
-
-                AboutSection()
+            Section {
+                Button {
+                    showingImportSheet = true
+                } label: {
+                    HStack {
+                        Image(systemName: "square.and.arrow.down")
+                            .foregroundStyle(.secondary)
+                            .frame(width: 28)
+                        Text("Import from CSV")
+                            .foregroundStyle(.primary)
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(.tertiary)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            } header: {
+                Text("Data")
+            } footer: {
+                Text("Import past transactions from a CSV file. Your data stays on this device and in your private iCloud.")
             }
-            .navigationTitle("Settings")
-            .navigationBarTitleDisplayMode(.large)
-            .sheet(isPresented: $showingImport) {
-                ImportCSVSheet()
+
+            PrivacyAndDataSection()
+            AboutSection()
+        }
+        .navigationTitle("Settings")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Done") { dismiss() }
+                    .fontWeight(.semibold)
             }
         }
-    }
-
-    // MARK: - Financial Data Section
-
-    private var financialDataSection: some View {
-        Section {
-            NavigationLink {
-                IncomeSourcesView()
-            } label: {
-                Label("Income Sources", systemImage: "arrow.down.circle")
-            }
-
-            Button {
-                showingImport = true
-            } label: {
-                Label("Import from CSV", systemImage: "doc.badge.arrow.up")
-                    .foregroundStyle(.primary)
-            }
-        } header: {
-            Text("Financial Data")
+        .sheet(isPresented: $showingImportSheet) {
+            ImportCSVSheet()
         }
     }
 }

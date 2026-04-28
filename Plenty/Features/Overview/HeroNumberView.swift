@@ -2,21 +2,33 @@
 //  HeroNumberView.swift
 //  Plenty
 //
-//  Target path: Plenty/Features/Home/HeroNumberView.swift
+//  Target path: Plenty/Features/Overview/HeroNumberView.swift
 //
-//  The big number on Home. Plenty's hero is restrained: big bold
-//  tabular numerals, plenty of breathing room, color that shifts
-//  subtly with zone. No ring decoration, no progress arc — the
-//  typography is the design.
+//  Phase 3 (v2): reads `snapshot.monthlyBudgetRemaining` instead of
+//  `snapshot.spendable`. Color logic per PDS §4.1:
 //
-//  Color logic per PRD §6:
-//    .safe    → primary (charcoal in light, off-white in dark)
-//    .warning → amber, but only the number, never the whole region
-//    .over    → terracotta
-//    .empty   → secondary (muted)
+//      ≥ 0  →  sage
+//      < 0  →  terracotta
 //
-//  Below the number sits a one-line context label that adapts to zone.
-//  The Read appears separately beneath via TheReadView.
+//  Label adapts to sign:
+//    • Positive → "You have"
+//    • Zero     → "You're at zero this month"
+//    • Negative → "You're over by"
+//
+//  The negative state shows the absolute value (no minus glyph in the
+//  big number) since the label conveys direction. This avoids the
+//  visual noise of a leading "−$" while still making the state
+//  unambiguous.
+//
+//  Removed in v2:
+//    • Zone-based color logic (sage/amber/terracotta four-state)
+//    • Per-day context line ("That's about $45 a day.")
+//    • Empty-state special copy ("Add a paycheck to see your number.")
+//
+//  The per-day context moves to The Read (when it has something
+//  meaningful to say) and to the optional month-end projection line
+//  in P7. The empty state is folded into the new label/messaging
+//  ("You're at zero this month") which reads naturally at $0.
 //
 
 import SwiftUI
@@ -27,8 +39,7 @@ struct HeroNumberView: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    @State private var didEnterWarning = false
-    @State private var didEnterOver = false
+    @State private var didEnterNegative = false
 
     // MARK: - Body
 
@@ -42,23 +53,17 @@ struct HeroNumberView: View {
                 .foregroundStyle(numberColor)
                 .lineLimit(1)
                 .minimumScaleFactor(0.5)
-                .contentTransition(.numericText(value: spendableAsDouble))
-                .animation(reduceMotion ? nil : .snappy, value: snapshot.spendable)
-
-            contextLine
+                .contentTransition(.numericText(value: amountAsDouble))
+                .animation(reduceMotion ? nil : .snappy, value: snapshot.monthlyBudgetRemaining)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 24)
-        .onChange(of: snapshot.zone) { oldZone, newZone in
-            if newZone == .warning && oldZone != .warning {
-                didEnterWarning.toggle()
-            }
-            if newZone == .over && oldZone != .over {
-                didEnterOver.toggle()
+        .onChange(of: snapshot.monthlyBudgetIsNegative) { wasNegative, isNegative in
+            if isNegative && !wasNegative {
+                didEnterNegative.toggle()
             }
         }
-        .sensoryFeedback(.warning, trigger: didEnterWarning)
-        .sensoryFeedback(.error, trigger: didEnterOver)
+        .sensoryFeedback(.warning, trigger: didEnterNegative)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityDescription)
     }
@@ -67,88 +72,48 @@ struct HeroNumberView: View {
 
     @ViewBuilder
     private var label: some View {
-        if snapshot.zone == .empty {
-            Text("Spendable")
-                .font(Typography.Support.caption)
-                .foregroundStyle(.tertiary)
-                .textCase(.uppercase)
-                .tracking(0.6)
+        Text(labelText)
+            .font(Typography.Support.caption)
+            .foregroundStyle(.secondary)
+            .textCase(snapshot.monthlyBudgetRemaining == 0 ? .uppercase : nil)
+            .tracking(snapshot.monthlyBudgetRemaining == 0 ? 0.6 : 0)
+    }
+
+    private var labelText: String {
+        if snapshot.monthlyBudgetRemaining > 0 {
+            return "You have"
+        } else if snapshot.monthlyBudgetRemaining < 0 {
+            return "You're over by"
         } else {
-            Text("You have")
-                .font(Typography.Support.caption)
-                .foregroundStyle(.secondary)
+            return "You're at zero this month"
         }
     }
 
-    // MARK: - Context Line
-
-    @ViewBuilder
-    private var contextLine: some View {
-        switch snapshot.zone {
-        case .empty:
-            Text("Add a paycheck to see your number.")
-                .font(Typography.Support.footnote)
-                .foregroundStyle(.tertiary)
-
-        case .safe:
-            if let perDay = snapshot.sustainableDailyBurn, perDay > 0 {
-                Text("That's about \(perDay.asPlainCurrency()) a day.")
-                    .font(Typography.Support.footnote)
-                    .foregroundStyle(.secondary)
-            } else {
-                Text("Spendable through this month.")
-                    .font(Typography.Support.footnote)
-                    .foregroundStyle(.secondary)
-            }
-
-        case .warning:
-            Text("Spending pace deserves a glance.")
-                .font(Typography.Support.footnote)
-                .foregroundStyle(.secondary)
-
-        case .over:
-            Text("You're past your margin this month.")
-                .font(Typography.Support.footnote)
-                .foregroundStyle(Theme.terracotta)
-        }
-    }
-
-    // MARK: - Computed
+    // MARK: - Number
 
     private var formattedAmount: String {
-        if snapshot.zone == .empty {
-            return "—"
-        }
-
-        let value = snapshot.spendable
-        let absValue = value < 0 ? -value : value
-        let formatted = absValue.asPlainCurrency()
-        return value < 0 ? "−\(formatted)" : formatted
-    }
-
-    private var spendableAsDouble: Double {
-        NSDecimalNumber(decimal: snapshot.spendable).doubleValue
+        let value = abs(snapshot.monthlyBudgetRemaining)
+        return value.asPlainCurrency()
     }
 
     private var numberColor: Color {
-        switch snapshot.zone {
-        case .empty:   return .secondary.opacity(0.5)
-        case .safe:    return .primary
-        case .warning: return Theme.amber
-        case .over:    return Theme.terracotta
-        }
+        snapshot.monthlyBudgetIsNegative ? Theme.terracotta : Theme.sage
     }
 
+    private var amountAsDouble: Double {
+        NSDecimalNumber(decimal: snapshot.monthlyBudgetRemaining).doubleValue
+    }
+
+    // MARK: - Accessibility
+
     private var accessibilityDescription: String {
-        switch snapshot.zone {
-        case .empty:
-            return "No spendable amount yet. Add a paycheck to see your number."
-        case .safe, .warning:
-            let amount = snapshot.spendable.asPlainCurrency()
-            return "You have \(amount) spendable this month."
-        case .over:
-            let amount = (snapshot.spendable < 0 ? -snapshot.spendable : snapshot.spendable).asPlainCurrency()
-            return "You are over your margin by \(amount) this month."
+        let amount = abs(snapshot.monthlyBudgetRemaining).asPlainCurrency()
+        if snapshot.monthlyBudgetRemaining > 0 {
+            return "You have \(amount) of budget remaining this month."
+        } else if snapshot.monthlyBudgetRemaining < 0 {
+            return "You're over your budget by \(amount) this month."
+        } else {
+            return "You're at zero budget remaining this month."
         }
     }
 }
@@ -167,80 +132,50 @@ private extension Decimal {
 
 // MARK: - Previews
 
-#Preview("Safe") {
-    HeroNumberView(snapshot: .preview(.safe))
+#Preview("Positive — $1,840") {
+    HeroNumberView(snapshot: .v2Preview(monthlyBudgetRemaining: 1840))
         .background(Theme.background)
 }
 
-#Preview("Warning") {
-    HeroNumberView(snapshot: .preview(.warning))
+#Preview("Zero") {
+    HeroNumberView(snapshot: .v2Preview(monthlyBudgetRemaining: 0))
         .background(Theme.background)
 }
 
-#Preview("Over") {
-    HeroNumberView(snapshot: .preview(.over))
-        .background(Theme.background)
-}
-
-#Preview("Empty") {
-    HeroNumberView(snapshot: .preview(.empty))
+#Preview("Negative — −$540") {
+    HeroNumberView(snapshot: .v2Preview(monthlyBudgetRemaining: -540))
         .background(Theme.background)
 }
 
 // MARK: - Preview Snapshots
 
 private extension PlentySnapshot {
-    static func preview(_ zone: PlentySnapshot.Zone) -> PlentySnapshot {
-        switch zone {
-        case .safe:
-            return PlentySnapshot(
-                spendable: 1840, cashOnHand: 4200, cashAccountsTotal: 4200,
-                creditCardDebt: 0, statementDueBeforeNextIncome: 0,
-                billsRemaining: 850, billsTotal: 1700, billsPaid: 850,
-                expensesThisMonth: 620,
-                confirmedIncome: 3200, expectedIncome: 0, totalIncome: 3200,
-                nextIncomeDate: nil,
-                plannedSavingsThisMonth: 500, actualSavingsThisMonth: 250,
-                plannedSavingsRemaining: 250,
-                smoothedDailyBurn: 38, sustainableDailyBurn: 92,
-                billsPaidCount: 2, billsTotalCount: 4,
-                incomeConfirmedCount: 1, incomeTotalCount: 1,
-                expensesByCategory: []
-            )
-        case .warning:
-            var s = PlentySnapshot.preview(.safe)
-            s = PlentySnapshot(
-                spendable: 320, cashOnHand: s.cashOnHand, cashAccountsTotal: s.cashAccountsTotal,
-                creditCardDebt: s.creditCardDebt, statementDueBeforeNextIncome: s.statementDueBeforeNextIncome,
-                billsRemaining: s.billsRemaining, billsTotal: s.billsTotal, billsPaid: s.billsPaid,
-                expensesThisMonth: s.expensesThisMonth,
-                confirmedIncome: s.confirmedIncome, expectedIncome: s.expectedIncome, totalIncome: s.totalIncome,
-                nextIncomeDate: s.nextIncomeDate,
-                plannedSavingsThisMonth: s.plannedSavingsThisMonth, actualSavingsThisMonth: s.actualSavingsThisMonth,
-                plannedSavingsRemaining: s.plannedSavingsRemaining,
-                smoothedDailyBurn: 110, sustainableDailyBurn: 25,
-                billsPaidCount: s.billsPaidCount, billsTotalCount: s.billsTotalCount,
-                incomeConfirmedCount: s.incomeConfirmedCount, incomeTotalCount: s.incomeTotalCount,
-                expensesByCategory: s.expensesByCategory
-            )
-            return s
-        case .over:
-            return PlentySnapshot(
-                spendable: -240, cashOnHand: 200, cashAccountsTotal: 200,
-                creditCardDebt: 0, statementDueBeforeNextIncome: 0,
-                billsRemaining: 440, billsTotal: 440, billsPaid: 0,
-                expensesThisMonth: 1800,
-                confirmedIncome: 2200, expectedIncome: 0, totalIncome: 2200,
-                nextIncomeDate: nil,
-                plannedSavingsThisMonth: 0, actualSavingsThisMonth: 0,
-                plannedSavingsRemaining: 0,
-                smoothedDailyBurn: 75, sustainableDailyBurn: nil,
-                billsPaidCount: 0, billsTotalCount: 1,
-                incomeConfirmedCount: 1, incomeTotalCount: 1,
-                expensesByCategory: []
-            )
-        case .empty:
-            return .empty
-        }
+    static func v2Preview(monthlyBudgetRemaining: Decimal) -> PlentySnapshot {
+        PlentySnapshot(
+            spendable: monthlyBudgetRemaining,
+            cashOnHand: 4200,
+            cashAccountsTotal: 4200,
+            creditCardDebt: 0,
+            statementDueBeforeNextIncome: 0,
+            billsRemaining: 0,
+            billsTotal: 1700,
+            billsPaid: 1700,
+            expensesThisMonth: 460,
+            confirmedIncome: 4000,
+            expectedIncome: 0,
+            totalIncome: 4000,
+            nextIncomeDate: nil,
+            plannedSavingsThisMonth: 0,
+            actualSavingsThisMonth: 0,
+            plannedSavingsRemaining: 0,
+            smoothedDailyBurn: 38,
+            sustainableDailyBurn: 92,
+            billsPaidCount: 4,
+            billsTotalCount: 4,
+            incomeConfirmedCount: 1,
+            incomeTotalCount: 1,
+            expensesByCategory: [],
+            monthlyBudgetRemaining: monthlyBudgetRemaining
+        )
     }
 }

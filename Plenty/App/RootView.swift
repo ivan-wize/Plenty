@@ -4,10 +4,25 @@
 //
 //  Target path: Plenty/App/RootView.swift
 //
-//  Phase 5: tab content + AddActionSheet + pendingAddSheet routing.
-//  Phase 6: + StoreKit init.
-//  Phase 7: + Subscription detection runner, notification rescheduling,
-//           subscription reminder sync, weekly Read pre-generation.
+//  Phase 0 (v2): four-tab routing, no center Add button, MonthScope
+//  reset to the current calendar month on cold launch.
+//
+//  Changes from v1:
+//    • Tab cases: overview / income / expenses / plan (was home /
+//      accounts / plan / settings).
+//    • LiquidGlassTabBar API drops onAddTapped (the FAB on Overview
+//      replaces the center add button — P3).
+//    • AddActionSheet presentation removed (file deleted).
+//    • Settings sheet hookup added but unused until P3 wires the
+//      OverviewTopBar gear button.
+//    • MonthScope is reset to "now" once on cold launch so the UI
+//      always opens on the current month even if the previous session
+//      ended scoped elsewhere.
+//
+//  Launch tasks (StoreKit, notifications, subscription detection,
+//  reminder sync, weekly Read pre-generation) carry over from v1
+//  unchanged. The weekly Read generation uses the new BudgetEngine
+//  output as soon as P1 lands.
 //
 
 import SwiftUI
@@ -16,13 +31,13 @@ import SwiftData
 struct RootView: View {
 
     @Environment(AppState.self) private var appState
+    @Environment(MonthScope.self) private var monthScope
     @Environment(StoreKitManager.self) private var storeKit
     @Environment(NotificationManager.self) private var notifications
     @Environment(SubscriptionReminderManager.self) private var subscriptionReminders
 
     @Environment(\.modelContext) private var modelContext
 
-    @State private var showingAddSheet = false
     @State private var readCache = TheReadCache()
 
     var body: some View {
@@ -31,30 +46,24 @@ struct RootView: View {
         tabContent
             .background(Theme.background)
             .safeAreaInset(edge: .bottom) {
-                LiquidGlassTabBar(
-                    selectedTab: $state.selectedTab,
-                    onAddTapped: { showingAddSheet = true }
-                )
-                .padding(.horizontal, 16)
-                .padding(.bottom, 4)
-            }
-            .sheet(isPresented: $showingAddSheet) {
-                AddActionSheet(
-                    onAddExpense: {
-                        state.pendingAddSheet = .expense
-                    },
-                    onAddIncome: {
-                        state.pendingAddSheet = .income(preferRecurring: false)
-                    },
-                    onAddBill: {
-                        state.pendingAddSheet = .bill()
-                    }
-                )
+                LiquidGlassTabBar(selectedTab: $state.selectedTab)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 4)
             }
             .sheet(item: $state.pendingAddSheet) { kind in
                 pendingSheetView(for: kind)
             }
+            .sheet(isPresented: $state.showingSettingsSheet) {
+                NavigationStack {
+                    SettingsView()
+                }
+            }
             .task {
+                // Reset month scope to the current calendar month on
+                // each cold launch. Within a session, the user's
+                // navigation persists.
+                monthScope.resetToCurrent()
+
                 await runLaunchTasks()
             }
     }
@@ -62,32 +71,35 @@ struct RootView: View {
     // MARK: - Launch Tasks
 
     private func runLaunchTasks() async {
-        // 1. StoreKit (Phase 6)
+        // 1. StoreKit — refresh entitlements + load product
         await storeKit.refreshEntitlements()
         await storeKit.loadProduct()
 
-        // 2. Notifications (Phase 7)
+        // 2. Notifications — authorization status
         await notifications.refreshAuthorizationStatus()
 
-        // 3. Subscription detection (Phase 7) — cheap, run once per launch
+        // 3. Subscription detection — cheap, run once per launch
         let runner = SubscriptionDetectionRunner(modelContext: modelContext)
         await runner.run()
 
-        // 4. Sync EventKit reminders for marked subscriptions (Phase 7)
+        // 4. EventKit reminders for marked subscriptions
         if notifications.subscriptionRemindersEnabled {
             let subs = (try? modelContext.fetch(FetchDescriptor<Subscription>())) ?? []
             await subscriptionReminders.syncReminders(for: subs)
         }
 
-        // 5. Schedule notifications based on current data (Phase 7)
+        // 5. Schedule notifications based on current data
         await scheduleNotifications()
     }
 
     /// Refreshes weekly Read and re-schedules all UNNotifications.
+    ///
+    /// Note: BudgetEngine.calculate is called here with v1 field set;
+    /// P1 rewrites the engine to also produce v2 fields. The call site
+    /// stays the same.
     private func scheduleNotifications() async {
         guard notifications.authorizationStatus == .authorized else { return }
 
-        // Compute current snapshot for the weekly Read.
         let accounts = (try? modelContext.fetch(FetchDescriptor<Account>())) ?? []
         let transactions = (try? modelContext.fetch(FetchDescriptor<Transaction>())) ?? []
         let goals = (try? modelContext.fetch(FetchDescriptor<SavingsGoal>())) ?? []
@@ -121,10 +133,10 @@ struct RootView: View {
     @ViewBuilder
     private var tabContent: some View {
         switch appState.selectedTab {
-        case .home:     HomeTab()
-        case .accounts: AccountsTab()
+        case .overview: OverviewTab()
+        case .income:   IncomeTab()
+        case .expenses: ExpensesTab()
         case .plan:     PlanTab()
-        case .settings: SettingsTab()
         }
     }
 

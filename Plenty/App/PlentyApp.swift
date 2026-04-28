@@ -4,10 +4,13 @@
 //
 //  Target path: Plenty/App/PlentyApp.swift
 //
+//  Phase 0 (v2): + MonthScope injected into the environment.
+//
 //  Application entry point. Wires every @Observable manager that
 //  RootView and its descendants depend on into the SwiftUI environment:
 //
 //    • AppState                     — selected tab, pending sheets, errors
+//    • MonthScope                   — month/year navigation state (v2)
 //    • CloudKitSyncMonitor          — background sync status
 //    • StoreKitManager              — Pro purchase state
 //    • NotificationManager          — auth + per-channel toggles
@@ -28,6 +31,7 @@ struct PlentyApp: App {
     // MARK: - Managers
 
     @State private var appState = AppState()
+    @State private var monthScope = MonthScope()
     @State private var syncMonitor = CloudKitSyncMonitor()
     @State private var storeKit = StoreKitManager()
     @State private var notifications = NotificationManager()
@@ -38,6 +42,10 @@ struct PlentyApp: App {
     @AppStorage(AppearanceMode.storageKey) private var appearanceRaw = AppearanceMode.system.rawValue
 
     private let container: ModelContainer
+
+    private var currentAppearance: AppearanceMode {
+        AppearanceMode(rawValue: appearanceRaw) ?? .system
+    }
 
     // MARK: - Init
 
@@ -55,6 +63,7 @@ struct PlentyApp: App {
         WindowGroup {
             RootView()
                 .environment(appState)
+                .environment(monthScope)
                 .environment(syncMonitor)
                 .environment(storeKit)
                 .environment(notifications)
@@ -74,21 +83,8 @@ struct PlentyApp: App {
                     syncMonitor.attach(appState: appState)
 
                     syncMonitor.start()
-
-                    // If CloudKit failed to initialize at container time,
-                    // mark the monitor as disabled so the UI knows not to
-                    // expect sync events.
-                    if !ModelContainerFactory.isCloudKitEnabled {
-                        syncMonitor.markDisabled()
-                    }
                 }
+                .modelContainer(container)
         }
-        .modelContainer(container)
-    }
-
-    // MARK: - Appearance
-
-    private var currentAppearance: AppearanceMode {
-        AppearanceMode(rawValue: appearanceRaw) ?? .system
     }
 }
