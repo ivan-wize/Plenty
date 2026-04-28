@@ -1,222 +1,207 @@
 //
-//  ReceiptScannerView.swift
+//  DocumentScannerView.swift
 //  Plenty
 //
-//  Target path: Plenty/Features/Add/ReceiptScannerView.swift
+//  Target path: Plenty/Features/Expenses/Scanning/DocumentScannerView.swift
 //
-//  Sheet that scans a paper receipt and returns a structured
-//  ReceiptDraft. Three steps:
+//  Phase 5 (v2): the unified document scanner. Replaces the v1
+//  ReceiptScannerView. Given a captured document, runs Vision OCR,
+//  classifies the result via AIDocumentRouter, parses with the right
+//  parser, and returns a DocumentScanResult to the caller.
 //
-//    1. Present VNDocumentCameraViewController (UIKit-bridged) for the
-//       user to shoot the receipt. They get document edge detection,
-//       perspective correction, and the option to retake.
-//    2. Run Vision text recognition on the resulting image.
-//    3. Pipe the OCR text to AIReceiptParser for structured extraction.
+//  Modes:
+//    • .auto    — classify and route (FAB and Expenses tab `+` use
+//                 this)
+//    • .receipt — skip the classifier and always parse as a receipt.
+//                 AddExpenseSheet's internal scan button uses this:
+//                 the user is already in the expense flow, so we
+//                 honor their intent.
+//    • .bill    — symmetric: BillEditorSheet's scan button uses this
+//                 to always parse as a bill.
 //
-//  Returns the ReceiptDraft + the captured image data (so it can be
-//  saved on the Transaction for receipt history) via the onFinish
-//  closure. The caller (AddExpenseSheet) pre-fills its fields and
-//  dismisses the scanner.
-//
-//  If Apple Intelligence is unavailable, the OCR text is still
-//  captured and the user is shown a "Couldn't auto-fill — please
-//  enter manually" toast. The image is still returned so they can at
-//  least save the receipt for their records.
+//  Result cases:
+//    • .receipt(ReceiptDraft, Data?) — caller presents AddExpenseSheet
+//      with the draft and image.
+//    • .bill(BillDraft, Data?) — caller presents BillEditorSheet.
+//    • .manual(image: Data?) — AI unavailable or both parsers
+//      returned nothing useful. Caller presents AddExpenseSheet with
+//      just the image attached.
+//    • .cancelled — user dismissed the scanner.
 //
 
 import SwiftUI
 import VisionKit
 import Vision
-import UIKit
 import os
 
-private let logger = Logger(subsystem: "com.plenty.app", category: "receipt-scanner")
+private let logger = Logger(subsystem: "com.plenty.app", category: "document-scanner")
 
-struct ReceiptScannerView: View {
+// MARK: - Mode and Result
 
-    /// Called once the user has scanned, OCR has run, and the AI
-    /// parser has had a chance. The draft may have nil fields where
-    /// the parser couldn't extract; the image data is always present
-    /// when this is called with a non-nil result.
-    let onFinish: (ReceiptDraft?, Data?) -> Void
-
-    @Environment(\.dismiss) private var dismiss
-
-    @State private var phase: Phase = .scanning
-    @State private var capturedImage: UIImage?
-    @State private var ocrText: String = ""
-    @State private var draft: ReceiptDraft?
-
-    enum Phase: Equatable {
-        case scanning
-        case processing
-        case unavailable
-    }
-
-    var body: some View {
-        Group {
-            switch phase {
-            case .scanning:
-                DocumentScannerRepresentable(
-                    onFinish: handleScanFinished,
-                    onCancel: { onFinish(nil, nil); dismiss() }
-                )
-                .ignoresSafeArea()
-            case .processing:
-                processingView
-            case .unavailable:
-                unavailableView
-            }
-        }
-    }
-
-    // MARK: - Processing view
-
-    private var processingView: some View {
-        VStack(spacing: 16) {
-            ProgressView()
-                .controlSize(.large)
-                .tint(Theme.sage)
-            Text("Reading the receipt…")
-                .font(Typography.Body.regular)
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Theme.background.ignoresSafeArea())
-    }
-
-    private var unavailableView: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "camera.fill.badge.ellipsis")
-                .font(.system(size: 48))
-                .foregroundStyle(.secondary)
-            Text("Camera not available on this device.")
-                .font(Typography.Body.regular)
-                .foregroundStyle(.secondary)
-            Button("Done") {
-                onFinish(nil, nil)
-                dismiss()
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(Theme.sage)
-        }
-        .padding()
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Theme.background.ignoresSafeArea())
-    }
-
-    // MARK: - Scan handling
-
-    private func handleScanFinished(_ image: UIImage?) {
-        guard let image else {
-            onFinish(nil, nil)
-            dismiss()
-            return
-        }
-        capturedImage = image
-        phase = .processing
-
-        Task {
-            // 1. OCR the captured image.
-            let text = await runOCR(on: image)
-            ocrText = text
-
-            // 2. Compress the image for storage.
-            let imageData = image.jpegData(compressionQuality: 0.7)
-
-            // 3. Pipe OCR text to AI parser.
-            let parsed = await AIReceiptParser.parse(text)
-
-            await MainActor.run {
-                onFinish(parsed, imageData)
-                dismiss()
-            }
-        }
-    }
-
-    // MARK: - OCR
-
-    private func runOCR(on image: UIImage) async -> String {
-        guard let cgImage = image.cgImage else {
-            logger.warning("Receipt scan: no cgImage available.")
-            return ""
-        }
-
-        return await withCheckedContinuation { continuation in
-            let request = VNRecognizeTextRequest { request, error in
-                if let error {
-                    logger.error("OCR failed: \(error.localizedDescription)")
-                    continuation.resume(returning: "")
-                    return
-                }
-
-                let observations = request.results as? [VNRecognizedTextObservation] ?? []
-                let lines = observations.compactMap { obs in
-                    obs.topCandidates(1).first?.string
-                }
-                continuation.resume(returning: lines.joined(separator: "\n"))
-            }
-            request.recognitionLevel = .accurate
-            request.usesLanguageCorrection = true
-            request.recognitionLanguages = ["en-US"]
-
-            let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
-            do {
-                try handler.perform([request])
-            } catch {
-                logger.error("OCR handler perform failed: \(error.localizedDescription)")
-                continuation.resume(returning: "")
-            }
-        }
-    }
+enum DocumentScanMode: Sendable {
+    case auto
+    case receipt
+    case bill
 }
 
-// MARK: - VNDocumentCamera bridge
+enum DocumentScanResult: Sendable {
+    case receipt(ReceiptDraft, Data?)
+    case bill(BillDraft, Data?)
+    case manual(image: Data?)
+    case cancelled
+}
 
-private struct DocumentScannerRepresentable: UIViewControllerRepresentable {
+// MARK: - View
 
-    let onFinish: (UIImage?) -> Void
-    let onCancel: () -> Void
+struct DocumentScannerView: UIViewControllerRepresentable {
+
+    let mode: DocumentScanMode
+    let onFinish: (DocumentScanResult) -> Void
+
+    init(mode: DocumentScanMode = .auto, onFinish: @escaping (DocumentScanResult) -> Void) {
+        self.mode = mode
+        self.onFinish = onFinish
+    }
 
     func makeUIViewController(context: Context) -> VNDocumentCameraViewController {
-        let vc = VNDocumentCameraViewController()
-        vc.delegate = context.coordinator
-        return vc
+        let controller = VNDocumentCameraViewController()
+        controller.delegate = context.coordinator
+        return controller
     }
 
     func updateUIViewController(_ uiViewController: VNDocumentCameraViewController, context: Context) {}
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(onFinish: onFinish, onCancel: onCancel)
+        Coordinator(mode: mode, onFinish: onFinish)
     }
+
+    // MARK: - Coordinator
 
     final class Coordinator: NSObject, VNDocumentCameraViewControllerDelegate {
 
-        let onFinish: (UIImage?) -> Void
-        let onCancel: () -> Void
+        let mode: DocumentScanMode
+        let onFinish: (DocumentScanResult) -> Void
 
-        init(onFinish: @escaping (UIImage?) -> Void, onCancel: @escaping () -> Void) {
+        init(mode: DocumentScanMode, onFinish: @escaping (DocumentScanResult) -> Void) {
+            self.mode = mode
             self.onFinish = onFinish
-            self.onCancel = onCancel
         }
 
-        func documentCameraViewController(_ controller: VNDocumentCameraViewController, didFinishWith scan: VNDocumentCameraScan) {
-            // Take the first page only. Multi-page receipt scanning is
-            // out of scope for V1.
-            let image: UIImage? = scan.pageCount > 0 ? scan.imageOfPage(at: 0) : nil
-            controller.dismiss(animated: true)
-            onFinish(image)
+        // MARK: VNDocumentCameraViewControllerDelegate
+
+        func documentCameraViewController(
+            _ controller: VNDocumentCameraViewController,
+            didFinishWith scan: VNDocumentCameraScan
+        ) {
+            // Use the first page only — receipts and bills are
+            // single-page in the overwhelming majority of cases. If we
+            // ever support multi-page bills, that's a P10 follow-on.
+            guard scan.pageCount > 0 else {
+                controller.dismiss(animated: true) { [weak self] in
+                    self?.onFinish(.cancelled)
+                }
+                return
+            }
+            let firstImage = scan.imageOfPage(at: 0)
+            let imageData = firstImage.jpegData(compressionQuality: 0.7)
+
+            controller.dismiss(animated: true) { [weak self] in
+                guard let self else { return }
+                Task { @MainActor in
+                    let result = await self.processImage(firstImage, imageData: imageData)
+                    self.onFinish(result)
+                }
+            }
         }
 
         func documentCameraViewControllerDidCancel(_ controller: VNDocumentCameraViewController) {
-            controller.dismiss(animated: true)
-            onCancel()
+            controller.dismiss(animated: true) { [weak self] in
+                self?.onFinish(.cancelled)
+            }
         }
 
-        func documentCameraViewController(_ controller: VNDocumentCameraViewController, didFailWithError error: Error) {
+        func documentCameraViewController(
+            _ controller: VNDocumentCameraViewController,
+            didFailWithError error: Error
+        ) {
             logger.error("Document scan failed: \(error.localizedDescription)")
-            controller.dismiss(animated: true)
-            onFinish(nil)
+            controller.dismiss(animated: true) { [weak self] in
+                self?.onFinish(.cancelled)
+            }
+        }
+
+        // MARK: Pipeline
+
+        @MainActor
+        private func processImage(_ image: UIImage, imageData: Data?) async -> DocumentScanResult {
+            // 1. OCR
+            let ocrText = await Self.recognizeText(in: image)
+            guard let ocrText, !ocrText.isEmpty else {
+                logger.info("OCR produced no text — manual fallback")
+                return .manual(image: imageData)
+            }
+
+            // 2. Classify (or honor forced mode)
+            let kind: AIDocumentRouter.DocumentKind = await {
+                switch mode {
+                case .receipt: return .receipt
+                case .bill:    return .bill
+                case .auto:    return await AIDocumentRouter.classify(ocrText)
+                }
+            }()
+
+            // 3. Parse with the appropriate parser
+            switch kind {
+            case .receipt:
+                if let draft = await AIReceiptParser.parse(ocrText) {
+                    return .receipt(draft, imageData)
+                }
+                return .manual(image: imageData)
+
+            case .bill:
+                if let draft = await AIBillParser.parse(ocrText) {
+                    return .bill(draft, imageData)
+                }
+                return .manual(image: imageData)
+
+            case .unknown:
+                // Try receipt as the more common default.
+                if let draft = await AIReceiptParser.parse(ocrText) {
+                    return .receipt(draft, imageData)
+                }
+                return .manual(image: imageData)
+            }
+        }
+
+        // MARK: OCR
+
+        private static func recognizeText(in image: UIImage) async -> String? {
+            guard let cgImage = image.cgImage else { return nil }
+
+            return await withCheckedContinuation { continuation in
+                let request = VNRecognizeTextRequest { request, error in
+                    if let error {
+                        logger.error("Vision OCR error: \(error.localizedDescription)")
+                        continuation.resume(returning: nil)
+                        return
+                    }
+                    let observations = request.results as? [VNRecognizedTextObservation] ?? []
+                    let text = observations
+                        .compactMap { $0.topCandidates(1).first?.string }
+                        .joined(separator: "\n")
+                    continuation.resume(returning: text)
+                }
+                request.recognitionLevel = .accurate
+                request.usesLanguageCorrection = true
+
+                let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+                do {
+                    try handler.perform([request])
+                } catch {
+                    logger.error("Vision handler error: \(error.localizedDescription)")
+                    continuation.resume(returning: nil)
+                }
+            }
         }
     }
 }

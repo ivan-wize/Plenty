@@ -4,23 +4,16 @@
 //
 //  Target path: Plenty/DesignSystem/Components/AddFloatingButton.swift
 //
-//  Phase 2 (v2): the floating Add button on Overview.
+//  Phase 5 (v2): three-item menu now that the document scanner can
+//  route a captured page to the right editor automatically.
 //
-//  A round sage circle with a white "+" glyph, positioned in the
-//  bottom-right of the Overview tab (PDS §4.1). Tapping opens a Menu
-//  with two actions: Add transaction / Add bill. Both route through
-//  AppState.pendingAddSheet so RootView's existing pending-sheet
-//  router presents the right editor.
-//
-//  The third PDS-mentioned action ("Scan receipt") is reachable from
-//  inside the AddExpenseSheet's existing receipt section. P5 will add
-//  a direct scan-first flow that pre-fills the sheet from the
-//  captured receipt; for now the FAB stays clean with two primary
-//  paths.
-//
-//  The button respects the floating tab bar's safe-area inset — the
-//  caller is expected to position it with its own padding so it
-//  clears the tab bar.
+//  Menu actions (PDS §4.1):
+//    • Add transaction → AppState.pendingAddSheet = .expense
+//    • Add bill        → AppState.pendingAddSheet = .bill()
+//    • Scan document   → presents DocumentScannerView (mode: .auto),
+//                        on finish flips AppState.pendingAddSheet to
+//                        .expenseFromScan / .billFromScan / .expense
+//                        depending on the result.
 //
 
 import SwiftUI
@@ -30,8 +23,10 @@ struct AddFloatingButton: View {
     @Environment(AppState.self) private var appState
 
     /// Diameter of the circular button. 56pt matches Apple's spec for
-    /// floating action buttons and the v1 raised tab-bar add button.
+    /// floating action buttons.
     var size: CGFloat = 56
+
+    @State private var showingScanner = false
 
     var body: some View {
         Menu {
@@ -45,6 +40,12 @@ struct AddFloatingButton: View {
                 appState.pendingAddSheet = .bill()
             } label: {
                 Label("Add bill", systemImage: "doc.text")
+            }
+
+            Button {
+                showingScanner = true
+            } label: {
+                Label("Scan document", systemImage: "doc.viewfinder")
             }
         } label: {
             Image(systemName: "plus")
@@ -60,7 +61,33 @@ struct AddFloatingButton: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Add")
-        .accessibilityHint("Add a transaction or a bill.")
+        .accessibilityHint("Add a transaction, add a bill, or scan a document.")
         .sensoryFeedback(.impact(weight: .medium), trigger: appState.pendingAddSheet?.id)
+        .sheet(isPresented: $showingScanner) {
+            DocumentScannerView(mode: .auto) { result in
+                handleScannerResult(result)
+            }
+            .ignoresSafeArea()
+        }
+    }
+
+    private func handleScannerResult(_ result: DocumentScanResult) {
+        switch result {
+        case .receipt(let draft, let image):
+            appState.pendingAddSheet = .expenseFromScan(draft, image)
+        case .bill(let draft, let image):
+            appState.pendingAddSheet = .billFromScan(draft, image)
+        case .manual(let image):
+            // AI didn't classify confidently. Default to expense, but
+            // attach the image so the user has it.
+            if let image {
+                let blank = ReceiptDraft(merchant: nil, totalAmount: nil, date: nil, category: nil)
+                appState.pendingAddSheet = .expenseFromScan(blank, image)
+            } else {
+                appState.pendingAddSheet = .expense
+            }
+        case .cancelled:
+            break
+        }
     }
 }

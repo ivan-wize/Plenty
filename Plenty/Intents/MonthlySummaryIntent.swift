@@ -4,10 +4,11 @@
 //
 //  Target path: Plenty/Intents/MonthlySummaryIntent.swift
 //
-//  Read intent. "Plenty's monthly summary."
+//  Phase 8 (v2): "Plenty's monthly summary."
 //
-//  Speaks back the month at a glance and shows a small snippet view
-//  with the same numbers in the Shortcuts result card.
+//  Spoken summary now leads with monthlyBudgetRemaining. Snippet card
+//  shows the headline number with sage / terracotta tint to match the
+//  in-app hero treatment.
 //
 
 import AppIntents
@@ -20,7 +21,7 @@ struct MonthlySummaryIntent: AppIntent {
     static let title: LocalizedStringResource = "Monthly Summary"
 
     static let description: IntentDescription = IntentDescription(
-        "Hear the headline numbers for this month: spendable, income, bills, and savings.",
+        "Hear the headline numbers for this month: budget left, income, bills, and savings.",
         categoryName: "Budget"
     )
 
@@ -60,10 +61,20 @@ struct MonthlySummaryIntent: AppIntent {
             )
         }
 
-        // Build a compact spoken summary.
+        // Build a compact spoken summary in v2 voice.
         var parts: [String] = []
-        parts.append("\(snapshot.spendable.asPlainCurrency()) spendable.")
 
+        // Headline: budget remaining.
+        if snapshot.monthlyBudgetRemaining < 0 {
+            let over = abs(snapshot.monthlyBudgetRemaining).asPlainCurrency()
+            parts.append("You're \(over) over your budget.")
+        } else if snapshot.monthlyBudgetRemaining == 0 {
+            parts.append("You're at zero this month.")
+        } else {
+            parts.append("\(snapshot.monthlyBudgetRemaining.asPlainCurrency()) left this month.")
+        }
+
+        // Income.
         if snapshot.totalIncome > 0 {
             let confirmed = snapshot.confirmedIncome.asPlainCurrency()
             let total = snapshot.totalIncome.asPlainCurrency()
@@ -74,6 +85,7 @@ struct MonthlySummaryIntent: AppIntent {
             }
         }
 
+        // Bills.
         if snapshot.billsTotalCount > 0 {
             let unpaid = snapshot.billsTotalCount - snapshot.billsPaidCount
             if unpaid == 0 {
@@ -84,6 +96,7 @@ struct MonthlySummaryIntent: AppIntent {
             }
         }
 
+        // Savings.
         if snapshot.plannedSavingsThisMonth > 0 {
             let saved = snapshot.actualSavingsThisMonth.asPlainCurrency()
             let planned = snapshot.plannedSavingsThisMonth.asPlainCurrency()
@@ -104,16 +117,33 @@ struct MonthlySummaryIntent: AppIntent {
 private struct MonthlySummarySnippet: View {
     let snapshot: PlentySnapshot
 
+    private var headlineColor: Color {
+        snapshot.monthlyBudgetRemaining < 0 ? Theme.terracotta : Theme.sage
+    }
+
+    private var headlineLabel: String {
+        if snapshot.monthlyBudgetRemaining < 0 { return "Over budget" }
+        if snapshot.monthlyBudgetRemaining == 0 { return "At zero" }
+        return "Left this month"
+    }
+
+    private var headlineAmount: String {
+        let value = snapshot.monthlyBudgetRemaining
+        let abs = value < 0 ? -value : value
+        let formatted = abs.asPlainCurrency()
+        return value < 0 ? "−\(formatted)" : formatted
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
-                Text("Spendable")
+                Text(headlineLabel)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Text(snapshot.spendable.asPlainCurrency())
+                Text(headlineAmount)
                     .font(.system(size: 32, weight: .bold, design: .rounded))
                     .monospacedDigit()
-                    .foregroundStyle(snapshot.spendable < 0 ? .red : .primary)
+                    .foregroundStyle(headlineColor)
             }
 
             Divider()

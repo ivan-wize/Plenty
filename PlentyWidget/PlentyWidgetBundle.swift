@@ -5,8 +5,10 @@
 //  Target path: PlentyWidget/PlentyWidgetBundle.swift
 //  Widget target: PlentyWidget extension
 //
-//  Bundle entry point. Declares the single Plenty widget and routes
-//  to the right view based on widgetFamily.
+//  Phase 8 (v2): same widget kind string preserved
+//  ("com.plenty.app.widget"), so user instances on home screens carry
+//  through. Display name and description updated for v2 vocabulary.
+//  Entry view router references the renamed Small/Medium widgets.
 //
 //  Five families supported:
 //    • systemSmall          — Home screen small
@@ -14,9 +16,6 @@
 //    • accessoryCircular    — Lock screen circular
 //    • accessoryRectangular — Lock screen rectangular
 //    • accessoryInline      — Lock screen above the clock
-//
-//  Skipped: systemLarge (real estate not earned by the content),
-//  systemExtraLarge (iPad only, not v1 priority).
 //
 
 import SwiftUI
@@ -32,6 +31,11 @@ struct PlentyWidgetBundle: WidgetBundle {
 // MARK: - Widget Definition
 
 struct PlentyWidget: Widget {
+    /// IMPORTANT: this kind string must NOT change. WidgetKit uses it
+    /// for identity — changing it would orphan every user widget on
+    /// every home screen. The Swift type names around it have changed
+    /// (SmallSpendableWidget → SmallBudgetWidget etc.) but the kind
+    /// stays.
     let kind = "com.plenty.app.widget"
 
     var body: some WidgetConfiguration {
@@ -39,8 +43,8 @@ struct PlentyWidget: Widget {
             PlentyWidgetEntryView(entry: entry)
                 .containerBackground(.fill.tertiary, for: .widget)
         }
-        .configurationDisplayName("Spendable")
-        .description("See how much you have to spend this month, at a glance.")
+        .configurationDisplayName("Budget")
+        .description("See how much budget you have left this month, at a glance.")
         .supportedFamilies([
             .systemSmall,
             .systemMedium,
@@ -61,9 +65,9 @@ struct PlentyWidgetEntryView: View {
     var body: some View {
         switch family {
         case .systemSmall:
-            SmallSpendableWidget(entry: entry)
+            SmallBudgetWidget(entry: entry)
         case .systemMedium:
-            MediumSpendableWidget(entry: entry)
+            MediumBudgetWidget(entry: entry)
         case .accessoryCircular:
             CircularLockScreenView(entry: entry)
         case .accessoryRectangular:
@@ -71,7 +75,7 @@ struct PlentyWidgetEntryView: View {
         case .accessoryInline:
             InlineLockScreenView(entry: entry)
         default:
-            SmallSpendableWidget(entry: entry)
+            SmallBudgetWidget(entry: entry)
         }
     }
 }

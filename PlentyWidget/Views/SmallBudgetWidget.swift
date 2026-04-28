@@ -1,23 +1,29 @@
 //
-//  SmallSpendableWidget.swift
+//  SmallBudgetWidget.swift
 //  Plenty
 //
-//  Target path: PlentyWidget/Views/SmallSpendableWidget.swift
+//  Target path: PlentyWidget/Views/SmallBudgetWidget.swift
 //
-//  Home screen small widget. The most-installed family for this app.
+//  Phase 8 (v2): renamed from SmallSpendableWidget. Reads the v2 hero
+//  number (`monthlyBudgetRemaining`). Color and caption switch on
+//  sign:
 //
-//  Layout (vertical):
+//    ≥ 0  →  sage number, "Left" caption
+//    < 0  →  terracotta number, "Over" caption
+//
+//  The most-installed widget family for this app. Vertical layout:
+//
 //    Plenty wordmark (small, top)
 //    Spacer
-//    Hero number (rounded bold, monospaced digit, zone color)
-//    "Spendable" caption
+//    Hero number (rounded bold, monospaced digit)
+//    "Left" / "Over" caption
 //    Optional sub-line: per-day burn or upcoming bill summary
 //
 
 import SwiftUI
 import WidgetKit
 
-struct SmallSpendableWidget: View {
+struct SmallBudgetWidget: View {
 
     let entry: PlentyEntry
 
@@ -46,7 +52,7 @@ struct SmallSpendableWidget: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.5)
 
-            Text("Spendable")
+            Text(captionText)
                 .font(.caption2.weight(.medium))
                 .foregroundStyle(.secondary)
 
@@ -99,58 +105,54 @@ struct SmallSpendableWidget: View {
     // MARK: - Wordmark
 
     private var wordmark: some View {
-        HStack(spacing: 0) {
-            Text("Plenty")
-                .font(.caption2.weight(.bold))
-                .foregroundStyle(.secondary)
-        }
+        Text("Plenty")
+            .font(.caption2.weight(.bold))
+            .foregroundStyle(.secondary)
     }
 
     // MARK: - Computed
 
     private var formattedAmount: String {
-        let abs = entry.spendable < 0 ? -entry.spendable : entry.spendable
-        let formatted = abs.asCompactCurrency()
-        return entry.spendable < 0 ? "−\(formatted)" : formatted
+        let abs = entry.monthlyBudgetRemaining < 0
+            ? -entry.monthlyBudgetRemaining
+            : entry.monthlyBudgetRemaining
+        let value = NSDecimalNumber(decimal: abs).doubleValue
+        let formatted: String
+        if value >= 1_000_000 {
+            formatted = String(format: "$%.1fM", value / 1_000_000)
+        } else if value >= 10_000 {
+            formatted = String(format: "$%.0fk", value / 1_000)
+        } else if value >= 1_000 {
+            formatted = String(format: "$%.1fk", value / 1_000)
+        } else {
+            formatted = String(format: "$%.0f", value)
+        }
+        return entry.isOverBudget ? "−\(formatted)" : formatted
     }
 
     private var numberColor: Color {
-        switch entry.zone {
-        case .empty:   return .secondary
-        case .safe:    return .primary
-        case .warning: return Theme.amber
-        case .over:    return Theme.terracotta
-        }
+        entry.isOverBudget ? Theme.terracotta : Theme.sage
+    }
+
+    private var captionText: String {
+        entry.isOverBudget ? "Over" : "Left"
     }
 
     private var subLineText: String? {
-        if entry.zone == .over {
-            return "Over your margin"
-        }
-        if entry.billsRemainingCount > 0 {
-            let plural = entry.billsRemainingCount == 1 ? "bill" : "bills"
-            return "\(entry.billsRemainingCount) \(plural) due"
-        }
-        if let burn = entry.sustainableDailyBurn, burn > 0 {
+        // Prefer per-day burn when available and not over budget.
+        if !entry.isOverBudget,
+           let burn = entry.sustainableDailyBurn,
+           burn > 0 {
             return "~\(burn.asCompactCurrency())/day"
         }
-        return nil
-    }
-}
 
-private extension Decimal {
-    func asCompactCurrency() -> String {
-        let value = NSDecimalNumber(decimal: self).doubleValue
-        let absValue = abs(value)
-        if absValue >= 1_000_000 {
-            return String(format: "$%.1fM", value / 1_000_000)
+        // Fall back to next bill summary.
+        if let name = entry.nextBillName,
+           let amount = entry.nextBillAmount,
+           let day = entry.nextBillDueDay {
+            return "\(name) \(day.ordinalString): \(amount.asCompactCurrency())"
         }
-        if absValue >= 10_000 {
-            return String(format: "$%.0fk", value / 1_000)
-        }
-        if absValue >= 1_000 {
-            return String(format: "$%.1fk", value / 1_000)
-        }
-        return String(format: "$%.0f", value)
+
+        return nil
     }
 }

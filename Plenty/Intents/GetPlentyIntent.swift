@@ -4,14 +4,14 @@
 //
 //  Target path: Plenty/Intents/GetPlentyIntent.swift
 //
-//  Read intent. "How much do I have?" / "Check Plenty."
+//  Phase 8 (v2): "How much do I have?" / "Check Plenty."
 //
-//  Computes the current PlentySnapshot via BudgetEngine and speaks
-//  back the spendable amount. Voice matches Plenty's posture: second
-//  person, possession-leading, no exclamations.
+//  Speaks back the v2 hero — `monthlyBudgetRemaining`. Voice matches
+//  Plenty's posture: second person, possession-leading, no
+//  exclamations.
 //
-//  Replaces Left's GetLeftIntent. Field references updated for the
-//  PlentySnapshot rename ('left' → 'spendable').
+//  Title and description updated to "Check Budget" since "Spendable"
+//  is no longer the user-facing concept.
 //
 
 import AppIntents
@@ -20,10 +20,10 @@ import Foundation
 
 struct GetPlentyIntent: AppIntent {
 
-    static let title: LocalizedStringResource = "Check Spendable"
+    static let title: LocalizedStringResource = "Check Budget"
 
     static let description: IntentDescription = IntentDescription(
-        "See how much you can safely spend right now.",
+        "See how much budget you have left this month.",
         categoryName: "Budget"
     )
 
@@ -48,10 +48,8 @@ struct GetPlentyIntent: AppIntent {
         let transactions = (try? context.fetch(FetchDescriptor<Transaction>())) ?? []
         let goals = (try? context.fetch(FetchDescriptor<SavingsGoal>())) ?? []
 
-        let activeAccounts = AccountDerivations.activeAccounts(accounts)
-
         let snapshot = BudgetEngine.calculate(
-            accounts: activeAccounts,
+            accounts: AccountDerivations.activeAccounts(accounts),
             transactions: transactions,
             savingsGoals: goals,
             month: m,
@@ -63,27 +61,27 @@ struct GetPlentyIntent: AppIntent {
             return .result(dialog: "Plenty doesn't have enough data this month yet. Open the app to add your income or expenses.")
         }
 
-        // Build the spoken response.
+        // Build the spoken response using v2 vocabulary.
         var line: String
-        if snapshot.spendable < 0 {
-            let over = (snapshot.spendable < 0 ? -snapshot.spendable : snapshot.spendable).asPlainCurrency()
-            line = "You're past your margin by \(over) this month."
+        if snapshot.monthlyBudgetRemaining < 0 {
+            let over = abs(snapshot.monthlyBudgetRemaining).asPlainCurrency()
+            line = "You're \(over) over your budget this month."
+        } else if snapshot.monthlyBudgetRemaining == 0 {
+            line = "You're at zero this month — every dollar is spoken for."
         } else {
-            line = "You have \(snapshot.spendable.asPlainCurrency()) spendable this month."
+            line = "You have \(snapshot.monthlyBudgetRemaining.asPlainCurrency()) left this month."
         }
 
-        // Contextual addendum based on zone, kept short for spoken output.
-        switch snapshot.zone {
-        case .warning:
-            line += " Pace deserves a glance."
-        case .over:
-            // Already handled in the main line.
-            break
-        case .safe, .empty:
+        // Optional addendum.
+        if snapshot.monthlyBudgetRemaining >= 0 {
+            // Surface unpaid bills count when meaningful.
             if snapshot.billsRemaining > 0 {
                 let count = snapshot.billsTotalCount - snapshot.billsPaidCount
                 let plural = count == 1 ? "" : "s"
                 line += " \(count) bill\(plural) still to pay totaling \(snapshot.billsRemaining.asPlainCurrency())."
+            } else if snapshot.expectedIncomeRemaining > 0 {
+                let amount = snapshot.expectedIncomeRemaining.asPlainCurrency()
+                line += " \(amount) more in income expected this month."
             }
         }
 

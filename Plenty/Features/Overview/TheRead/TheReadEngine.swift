@@ -2,53 +2,54 @@
 //  TheReadEngine.swift
 //  Plenty
 //
-//  Target path: Plenty/Features/Home/TheRead/TheReadEngine.swift
+//  Target path: Plenty/Features/Overview/TheRead/TheReadEngine.swift
 //
-//  Phase 4: generates daily TheRead via 2-stage AI (classifier + body)
-//           with deterministic templates as fallback.
-//  Phase 7 update: + generateWeekly() that produces the Sunday Read.
-//           Body is up to 3 sentences and synthesizes the week's
-//           highlights instead of one observation.
+//  Phase 7 (v2): retuned to speak v2 vocabulary. The hero concept is
+//  no longer "spendable" — it's "what's left this month" derived from
+//  `snapshot.monthlyBudgetRemaining`. The prompts, deterministic
+//  templates, and snapshot summary all use the new framing.
 //
-//  Both daily and weekly share validator, fallback patterns, and the
-//  same restraint policy: when there's nothing meaningful to say, say
-//  nothing (silence kind).
+//  Also new in P7:
+//    • Pace bodies fold in `BurnRate.monthEndProjection` when the
+//      month is at least five days in. The Read can now say "at this
+//      pace, you'll end the month with about $400 to spare" instead
+//      of just talking about per-day rates in the abstract.
+//    • Deterministic classifier prefers monthEndProjection-flavored
+//      paceWarning over generic pace messaging when the projection is
+//      negative.
 //
-//  Notes on the AI types in this file:
-//    • The three @Generable structs (ClassifierOutput, BodyGeneration,
-//      WeeklyBodyGeneration) are declared fileprivate, not private.
-//      The @Generable macro emits conformance code in extensions at
-//      file scope, which can't reach a private type nested inside an
-//      enum.
-//    • Foundation Models' @Generable supports a fixed set of primitive
-//      types (String, Int, Double, Bool, Decimal, and Optionals/Arrays
-//      of those). Date is NOT supported, so primaryDate is exchanged as
-//      an ISO-8601 String and parsed locally before validation.
+//  Backward-compat note: snapshot still populates v1 fields
+//  (spendable, zone, pace) so the validator continues to recognize
+//  amounts the AI mentions. The AI just no longer leans on those
+//  words in its output.
 //
 
 import Foundation
 import FoundationModels
+import os
 
-// MARK: - Generable Types
-//
-// Declared fileprivate (not private) so the @Generable macro's
-// generated extensions can see them.
+private let logger = Logger(subsystem: "com.plenty.app", category: "the-read-engine")
+
+// MARK: - Generables
 
 @Generable
-fileprivate struct ClassifierOutput {
-    @Guide(.anyOf(["silence", "paceWarning", "paceTrend", "billReminder", "incomeReminder", "milestone"]))
+fileprivate struct ClassifierGeneration {
+    @Guide(
+        description: "The kind of read to surface for this snapshot. Pick exactly one.",
+        .anyOf(["silence", "paceWarning", "paceTrend", "billReminder", "incomeReminder", "milestone"])
+    )
     var kind: String
 }
 
 @Generable
 fileprivate struct BodyGeneration {
-    @Guide(description: "The Read sentence shown to the user. One short sentence, second-person, possession-leading, no exclamations, no em-dashes.")
+    @Guide(description: "The Read body. A single calm sentence in second person, possession-leading. No exclamations, no em-dashes, no bullet points. Plain currency like $1,840.")
     var body: String
 
-    @Guide(description: "If the body mentions a dollar amount, the exact value as Decimal. Nil if no amount is mentioned.")
+    @Guide(description: "If the body mentions any dollar amount, the most prominent one as a Decimal. Nil if no amount is mentioned.")
     var primaryAmount: Decimal?
 
-    @Guide(description: "If the body references a specific calendar date, that date as an ISO-8601 string in the form YYYY-MM-DD (for example 2026-04-30). Nil if no date is mentioned.")
+    @Guide(description: "If the body mentions any specific date, the date in ISO 8601 format (YYYY-MM-DD). Nil if no date is mentioned.")
     var primaryDate: String?
 }
 
@@ -65,7 +66,7 @@ fileprivate struct WeeklyBodyGeneration {
 
 enum TheReadEngine {
 
-    // MARK: - Daily (Phase 4) — Public Entry Point
+    // MARK: - Daily Public Entry Point
 
     static func generate(snapshot: PlentySnapshot) async -> TheRead {
         if case .available = SystemLanguageModel.default.availability {
@@ -76,11 +77,8 @@ enum TheReadEngine {
         return deterministicGenerate(snapshot: snapshot)
     }
 
-    // MARK: - Weekly (Phase 7) — Public Entry Point
+    // MARK: - Weekly Public Entry Point
 
-    /// Generate the Sunday Read. Same two-stage pattern as daily, but
-    /// produces a longer-form body (1-3 sentences) suited for a
-    /// notification.
     static func generateWeekly(snapshot: PlentySnapshot) async -> TheRead {
         if case .available = SystemLanguageModel.default.availability {
             if let aiRead = await aiGenerateWeekly(snapshot: snapshot) {
@@ -93,9 +91,7 @@ enum TheReadEngine {
     // MARK: - Daily AI Path
 
     private static func aiGenerate(snapshot: PlentySnapshot) async -> TheRead? {
-        guard let kind = await aiClassify(snapshot: snapshot) else {
-            return nil
-        }
+        guard let kind = await aiClassify(snapshot: snapshot) else { return nil }
 
         if kind == .silence {
             return TheRead(kind: .silence, body: "", generatedAt: .now, isAIGenerated: true)
@@ -106,9 +102,6 @@ enum TheReadEngine {
                 return nil
             }
 
-            // Foundation Models doesn't support Date as a Generable type,
-            // so primaryDate arrives as an ISO-8601 string. Parse it here
-            // before handing to the validator.
             let claimedDate = generation.primaryDate.flatMap(Self.parseISO8601(_:))
 
             let validation = TheReadValidator.validate(
@@ -120,7 +113,10 @@ enum TheReadEngine {
             if validation == .valid {
                 return TheRead(kind: kind, body: generation.body, generatedAt: .now, isAIGenerated: true)
             }
-            if attempt == 2 { return nil }
+            if attempt == 2 {
+                logger.info("Read body failed validation twice, falling back: \(String(describing: validation))")
+                return nil
+            }
         }
         return nil
     }
@@ -130,33 +126,32 @@ enum TheReadEngine {
             let session = LanguageModelSession(model: .default, instructions: classifierInstructions)
             let context = snapshotSummary(snapshot)
             let response = try await session.respond(
-                to: "Snapshot:\n\(context)\n\nReturn the most appropriate Read kind.",
-                generating: ClassifierOutput.self
+                to: "Snapshot:\n\(context)\n\nWhich kind?",
+                generating: ClassifierGeneration.self
             )
-            return TheRead.Kind(rawValue: response.content.kind)
+            return TheRead.Kind(rawValue: response.content.kind) ?? .silence
         } catch {
+            logger.error("Read classifier failed: \(error.localizedDescription)")
             return nil
         }
     }
 
-    private static func aiGenerateBody(
-        kind: TheRead.Kind,
-        snapshot: PlentySnapshot
-    ) async -> BodyGeneration? {
+    private static func aiGenerateBody(kind: TheRead.Kind, snapshot: PlentySnapshot) async -> BodyGeneration? {
         do {
             let session = LanguageModelSession(model: .default, instructions: bodyGeneratorInstructions(kind: kind))
             let context = snapshotSummary(snapshot)
             let response = try await session.respond(
-                to: "Snapshot:\n\(context)\n\nWrite the Read.",
+                to: "Snapshot:\n\(context)\n\nWrite a single sentence for the \(kind.rawValue) read.",
                 generating: BodyGeneration.self
             )
             return response.content
         } catch {
+            logger.error("Read body gen failed: \(error.localizedDescription)")
             return nil
         }
     }
 
-    // MARK: - Weekly AI Path (Phase 7)
+    // MARK: - Weekly AI Path
 
     private static func aiGenerateWeekly(snapshot: PlentySnapshot) async -> TheRead? {
         do {
@@ -169,15 +164,16 @@ enum TheReadEngine {
 
             let generation = response.content
 
-            // Weekly skips date validation (no specific dates in 1-3
-            // sentence summaries) but still validates amounts when present.
             if let amount = generation.primaryAmount {
                 let validation = TheReadValidator.validate(
                     claimedAmount: amount,
                     claimedDate: nil,
                     against: snapshot
                 )
-                if validation != .valid { return nil }
+                if validation != .valid {
+                    logger.info("Weekly read failed amount validation: \(String(describing: validation))")
+                    return nil
+                }
             }
 
             return TheRead(
@@ -187,6 +183,7 @@ enum TheReadEngine {
                 isAIGenerated: true
             )
         } catch {
+            logger.error("Weekly read gen failed: \(error.localizedDescription)")
             return nil
         }
     }
@@ -204,18 +201,26 @@ enum TheReadEngine {
 
     private static func deterministicClassify(_ snapshot: PlentySnapshot) -> TheRead.Kind {
         if snapshot.zone == .empty { return .silence }
+
+        // v2 priority shifts: a negative monthlyBudgetRemaining is the
+        // strongest signal. The pace warning still fires on burn-rate
+        // overshoot but yields to the bigger story.
+        if snapshot.monthlyBudgetIsNegative { return .paceWarning }
         if snapshot.pace == .over { return .paceWarning }
         if snapshot.billsRemaining > 0 { return .billReminder }
+
         if let next = snapshot.nextIncomeDate {
             let days = Calendar.current.dateComponents([.day], from: .now, to: next).day ?? 99
             if days <= 1 { return .incomeReminder }
         }
+
         if snapshot.pace == .onTrack,
            let sustainable = snapshot.sustainableDailyBurn,
            snapshot.smoothedDailyBurn < sustainable * Decimal(0.7),
            sustainable > 0 {
             return .paceTrend
         }
+
         if snapshot.actualSavingsThisMonth > 0 {
             return .milestone
         }
@@ -226,57 +231,91 @@ enum TheReadEngine {
         switch kind {
         case .silence, .weekly:
             return ""
+
         case .paceWarning:
-            let perDay = snapshot.smoothedDailyBurn.asCurrencyString()
-            let sustainable = (snapshot.sustainableDailyBurn ?? 0).asCurrencyString()
-            return "You're spending about \(perDay) a day, above the \(sustainable) the rest of the month asks for."
+            return paceWarningBody(snapshot: snapshot)
+
         case .paceTrend:
-            let pacePerDay = snapshot.smoothedDailyBurn.asCurrencyString()
-            return "You're tracking under your usual pace at \(pacePerDay) a day. The room is there if you want it."
+            return paceTrendBody(snapshot: snapshot)
+
         case .billReminder:
             let count = snapshot.billsTotalCount - snapshot.billsPaidCount
             let total = snapshot.billsRemaining.asCurrencyString()
-            if count == 1 { return "One bill is still unpaid this month, totaling \(total)." }
-            return "\(count) bills are still unpaid this month, totaling \(total)."
+            let plural = count == 1 ? "bill is" : "bills are"
+            return "\(count) \(plural) still to pay this month totaling \(total)."
+
         case .incomeReminder:
-            guard let next = snapshot.nextIncomeDate else {
-                return "Your next paycheck is on its way."
-            }
-            let weekday = Self.weekdayFormatter.string(from: next)
+            guard let next = snapshot.nextIncomeDate else { return "" }
+            let cal = Calendar.current
+            if cal.isDateInToday(next) { return "Your next paycheck arrives today." }
+            if cal.isDateInTomorrow(next) { return "Your next paycheck arrives tomorrow." }
+            let weekday = next.formatted(.dateTime.weekday(.wide))
             return "Your next paycheck arrives \(weekday)."
+
         case .milestone:
             let saved = snapshot.actualSavingsThisMonth.asCurrencyString()
             return "You've added \(saved) toward your savings this month."
         }
     }
 
-    // MARK: - Weekly Deterministic Path (Phase 7)
+    private static func paceWarningBody(snapshot: PlentySnapshot) -> String {
+        let perDay = snapshot.smoothedDailyBurn.asCurrencyString()
+        let sustainable = (snapshot.sustainableDailyBurn ?? 0).asCurrencyString()
 
-    static func deterministicGenerateWeekly(snapshot: PlentySnapshot) -> TheRead {
-        let body = weeklyDeterministicBody(snapshot: snapshot)
-        if body.isEmpty {
-            return TheRead(kind: .silence, body: "", generatedAt: .now, isAIGenerated: false)
+        // If the month has matured enough for a projection, lead with it.
+        if let projection = monthEndProjectionAmount(snapshot: snapshot) {
+            if projection < 0 {
+                let over = abs(projection).asCurrencyString()
+                return "You're spending about \(perDay) a day; at this pace you'll be about \(over) over by month-end."
+            }
         }
-        return TheRead(kind: .weekly, body: body, generatedAt: .now, isAIGenerated: false)
+
+        return "You're spending about \(perDay) a day, above the \(sustainable) the rest of the month asks for."
     }
 
-    /// Compose 1-3 sentences from the most relevant facts in the
-    /// snapshot. Order: spendable status, bills situation, savings note.
-    private static func weeklyDeterministicBody(snapshot: PlentySnapshot) -> String {
-        if snapshot.zone == .empty { return "" }
+    private static func paceTrendBody(snapshot: PlentySnapshot) -> String {
+        let perDay = snapshot.smoothedDailyBurn.asCurrencyString()
+
+        if let projection = monthEndProjectionAmount(snapshot: snapshot), projection > 0 {
+            let surplus = projection.asCurrencyString()
+            return "You're tracking under at \(perDay) a day; at this pace you'll end the month with about \(surplus) left."
+        }
+
+        return "You're tracking under your usual pace at \(perDay) a day. The room is there if you want it."
+    }
+
+    /// Wraps `BurnRate.monthEndProjection`. Returns nil when the
+    /// projection isn't reliable yet (early in the month, no expense
+    /// data, etc.).
+    private static func monthEndProjectionAmount(snapshot: PlentySnapshot) -> Decimal? {
+        BurnRate.monthEndProjection(
+            monthlyBudgetRemaining: snapshot.monthlyBudgetRemaining,
+            smoothedDailyBurn: snapshot.smoothedDailyBurn,
+            sustainableDailyBurn: snapshot.sustainableDailyBurn
+        )
+    }
+
+    // MARK: - Weekly Deterministic Path
+
+    static func deterministicGenerateWeekly(snapshot: PlentySnapshot) -> TheRead {
+        if snapshot.zone == .empty {
+            return TheRead(kind: .weekly, body: "", generatedAt: .now, isAIGenerated: false)
+        }
 
         var sentences: [String] = []
 
-        // Sentence 1: spendable status.
-        let spendable = snapshot.spendable.asCurrencyString()
-        if snapshot.spendable < 0 {
-            let over = (snapshot.spendable < 0 ? -snapshot.spendable : snapshot.spendable).asCurrencyString()
-            sentences.append("You're \(over) past your margin this month.")
+        // 1. Headline budget status.
+        if snapshot.monthlyBudgetRemaining > 0 {
+            let amount = snapshot.monthlyBudgetRemaining.asCurrencyString()
+            sentences.append("You have \(amount) left for the rest of the month.")
+        } else if snapshot.monthlyBudgetRemaining == 0 {
+            sentences.append("You're at zero this month — everything's spoken for.")
         } else {
-            sentences.append("You have \(spendable) spendable through the rest of the month.")
+            let over = abs(snapshot.monthlyBudgetRemaining).asCurrencyString()
+            sentences.append("You're \(over) over your budget this month.")
         }
 
-        // Sentence 2: bills situation, if relevant.
+        // 2. Bills situation.
         if snapshot.billsRemaining > 0 {
             let count = snapshot.billsTotalCount - snapshot.billsPaidCount
             let total = snapshot.billsRemaining.asCurrencyString()
@@ -286,107 +325,166 @@ enum TheReadEngine {
             sentences.append("Every bill for the month is squared away.")
         }
 
-        // Sentence 3: savings progress, if any.
+        // 3. Savings progress.
         if snapshot.actualSavingsThisMonth > 0 {
             let saved = snapshot.actualSavingsThisMonth.asCurrencyString()
             sentences.append("Saved \(saved) so far.")
         }
 
-        return sentences.joined(separator: " ")
+        return TheRead(
+            kind: .weekly,
+            body: sentences.joined(separator: " "),
+            generatedAt: .now,
+            isAIGenerated: false
+        )
     }
 
     // MARK: - Snapshot Summary
 
+    /// Renders the snapshot as a structured prompt context. v2 leads
+    /// with monthlyBudgetRemaining and includes the calendar-derived
+    /// `day` / `daysRemainingInMonth` fields so the model can reason
+    /// about timing.
     private static func snapshotSummary(_ snapshot: PlentySnapshot) -> String {
+        let cal = Calendar.current
+        let now = Date.now
+        let day = cal.component(.day, from: now)
+        let monthLen = cal.range(of: .day, in: .month, for: now)?.count ?? 30
+        let daysRemaining = max(0, monthLen - day)
+
         var lines: [String] = []
-        lines.append("spendable: \(snapshot.spendable)")
-        lines.append("cashOnHand: \(snapshot.cashOnHand)")
-        lines.append("billsRemaining: \(snapshot.billsRemaining) (\(snapshot.billsTotalCount - snapshot.billsPaidCount) unpaid)")
-        lines.append("statementDueBeforeNextIncome: \(snapshot.statementDueBeforeNextIncome)")
-        lines.append("plannedSavingsRemaining: \(snapshot.plannedSavingsRemaining)")
+        lines.append("monthlyBudgetRemaining: \(snapshot.monthlyBudgetRemaining)")
+        lines.append("confirmedIncome: \(snapshot.confirmedIncome)")
+        lines.append("expectedIncomeRemaining: \(snapshot.expectedIncomeRemaining)")
+        lines.append("billsTotal: \(snapshot.billsTotal) (\(snapshot.billsTotalCount) bills, \(snapshot.billsTotalCount - snapshot.billsPaidCount) unpaid)")
+        lines.append("billsRemaining: \(snapshot.billsRemaining)")
         lines.append("expensesThisMonth: \(snapshot.expensesThisMonth)")
+        lines.append("plannedSavingsRemaining: \(snapshot.plannedSavingsRemaining)")
+        lines.append("actualSavingsThisMonth: \(snapshot.actualSavingsThisMonth)")
         lines.append("smoothedDailyBurn: \(snapshot.smoothedDailyBurn)")
         if let s = snapshot.sustainableDailyBurn {
             lines.append("sustainableDailyBurn: \(s)")
         }
-        lines.append("pace: \(snapshot.pace)")
-        lines.append("zone: \(snapshot.zone)")
+        if let projection = monthEndProjectionAmount(snapshot: snapshot) {
+            lines.append("monthEndProjection: \(projection)")
+        }
+        lines.append("day: \(day)")
+        lines.append("daysRemainingInMonth: \(daysRemaining)")
         if let next = snapshot.nextIncomeDate {
             lines.append("nextIncomeDate: \(Self.iso8601DateFormatter.string(from: next))")
         }
         return lines.joined(separator: "\n")
     }
 
-    // MARK: - Prompts (mirror Resources/TheReadPrompt.md)
+    // MARK: - Prompts
 
-    private static let classifierInstructions = """
-    You are a classifier for "The Read", a single contextual sentence shown
-    beneath a budget hero number. Pick exactly one of these kinds:
+    fileprivate static let classifierInstructions = """
+    You are a classifier for "The Read", a single calm sentence shown beneath \
+    Plenty's Overview hero number. Pick exactly one of these kinds:
 
     • silence       — Nothing distinctive to say. Use this generously.
-    • paceWarning   — Burn rate is above sustainable; the user is overspending.
-    • paceTrend     — Burn rate is meaningfully below sustainable; positive note.
+    • paceWarning   — Spending pace is above sustainable, OR monthlyBudgetRemaining \
+    is negative. The user is overspending.
+    • paceTrend     — Spending pace is meaningfully below sustainable; positive note.
     • billReminder  — Unpaid bills this month deserve a heads-up.
     • incomeReminder — A paycheck is arriving in the next day or two.
     • milestone     — Positive savings progress worth acknowledging.
 
     Rules:
-    • If the user has no data (zone=empty), pick silence.
-    • If pace is over, prefer paceWarning over other kinds.
+    • If the user has no data at all, pick silence.
+    • If monthlyBudgetRemaining is negative, prefer paceWarning.
+    • If pace is over (smoothedDailyBurn > sustainableDailyBurn), prefer paceWarning.
     • Otherwise pick the most relevant single kind.
     • When in doubt, pick silence. Restraint matters more than coverage.
 
     Output only the kind value.
     """
 
-    private static func bodyGeneratorInstructions(kind: TheRead.Kind) -> String {
+    fileprivate static func bodyGeneratorInstructions(kind: TheRead.Kind) -> String {
         let voiceRules = """
-        Voice:
-        • Second person ("you have", "your bills", "your paycheck")
-        • Possession-leading ("you have $1,840" not "$1,840 is available")
-        • Calm and direct, no exclamations
-        • No em-dashes anywhere
-        • No marketing language, no excitement, no emojis
-        • One sentence, complete and self-contained
-        • Use plain currency formatting like "$1,840" or "$45 a day"
-        • If you mention a dollar amount, set primaryAmount to that exact value
-        • If you mention a specific date, set primaryDate to that date as an ISO-8601 string in the form YYYY-MM-DD
+        Voice rules:
+        • One sentence. No exclamations.
+        • Second person ("you have", "your bills").
+        • Possession-leading where natural ("you have $1,840 left" not "$1,840 is left").
+        • No em-dashes, no bullet points, no marketing language, no emojis.
+        • Plain currency like $1,840 (no decimals on whole dollars).
+        • Calm and direct. Calm matters more than clever.
+
+        If you mention a dollar amount, set primaryAmount to that exact value (Decimal).
+        If you mention a specific date, set primaryDate to ISO 8601 (YYYY-MM-DD).
         """
 
-        let kindGuidance: String
         switch kind {
-        case .silence, .weekly:
-            kindGuidance = "Return an empty body."
         case .paceWarning:
-            kindGuidance = "Note that spending is above sustainable. State the per-day burn and the sustainable per-day rate. No moral judgment, no panic."
+            return """
+            Write a paceWarning sentence for The Read. Speak about the user's spending \
+            pace and what it means for the rest of the month. If a monthEndProjection \
+            value is provided in the snapshot and it's negative, lead with the projected \
+            month-end shortfall. Otherwise speak about the per-day rate compared to \
+            sustainable.
+
+            Example: "You're spending about $58 a day; at this pace you'll be about $200 \
+            over by month-end."
+
+            \(voiceRules)
+            """
+
         case .paceTrend:
-            kindGuidance = "Note that spending is comfortably below sustainable. Mention the per-day burn. Frame as room available, not a goal."
+            return """
+            Write a paceTrend sentence for The Read. Speak calmly about the user being \
+            under their usual pace. If a monthEndProjection value is provided and it's \
+            positive, mention the projected month-end surplus. Otherwise speak about the \
+            per-day rate.
+
+            Example: "You're tracking under at $28 a day; at this pace you'll end the \
+            month with about $400 left."
+
+            \(voiceRules)
+            """
+
         case .billReminder:
-            kindGuidance = "Note unpaid bills. State the count and total. Do not mention which bills."
+            return """
+            Write a billReminder sentence for The Read. Mention the count of unpaid bills \
+            and their total.
+
+            Example: "Three bills are still unpaid this month, totaling $1,240."
+
+            \(voiceRules)
+            """
+
         case .incomeReminder:
-            kindGuidance = "Note that a paycheck arrives soon. State the day of the week."
+            return """
+            Write an incomeReminder sentence for The Read. Mention when the next paycheck \
+            arrives. Use "today" or "tomorrow" when applicable, otherwise the weekday.
+
+            Example: "Your next paycheck arrives Friday."
+
+            \(voiceRules)
+            """
+
         case .milestone:
-            kindGuidance = "Note positive savings progress this month. State the amount saved."
+            return """
+            Write a milestone sentence for The Read. Acknowledge savings progress this \
+            month with the actual amount.
+
+            Example: "You've added $300 toward your savings this month."
+
+            \(voiceRules)
+            """
+
+        case .silence, .weekly:
+            return voiceRules
         }
-
-        return """
-        You write "The Read", a single contextual sentence beneath a budget
-        hero number. The user asked for a \(kind.rawValue) Read.
-
-        \(kindGuidance)
-
-        \(voiceRules)
-        """
     }
 
-    private static let weeklyInstructions = """
-    You are writing the Sunday Read, a calm weekly digest delivered as a
-    notification on Sunday mornings. Compose 1-3 short sentences that
-    summarize where the user stands financially right now.
+    fileprivate static let weeklyInstructions = """
+    You are writing the Sunday Read, a calm weekly digest delivered as a notification \
+    on Sunday mornings. Compose 1-3 short sentences that summarize where the user \
+    stands financially right now.
 
     Voice:
     • Second person ("you have", "your bills", "your savings")
-    • Possession-leading ("you have $1,840" not "$1,840 is available")
+    • Possession-leading ("you have $1,840 left" not "$1,840 is available")
     • Calm and direct, no exclamations
     • No em-dashes, no bullet points, no emojis, no marketing language
     • Plain currency like "$1,840"
@@ -394,48 +492,34 @@ enum TheReadEngine {
     • Total length 1-3 sentences, never more
 
     Content priorities (in order):
-    1. Spendable status — how much is available, or whether the user is over
+    1. Monthly budget status — how much is left this month, or whether the user is over.
+       Use monthlyBudgetRemaining as the headline number.
     2. Bills situation — count and total of unpaid bills, or "all paid"
     3. Savings progress — amount saved this month, if any
 
-    Skip anything that doesn't apply. If the user has no meaningful financial
-    activity (zone=empty), return an empty body.
+    Skip anything that doesn't apply. If the user has no meaningful financial activity, \
+    return an empty body.
 
-    If you mention a dollar amount, set primaryAmount to the most prominent
-    one for validation.
+    If you mention a dollar amount, set primaryAmount to the most prominent one for \
+    validation.
     """
 
-    // MARK: - Formatters / Parsers
+    // MARK: - Helpers
 
-    private static let weekdayFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "EEEE"
-        return f
-    }()
-
-    /// Renders Date → "YYYY-MM-DD" for snapshot context strings, and
-    /// reads back ISO-8601 date strings the model returns.
-    private static let iso8601DateFormatter: ISO8601DateFormatter = {
-        let f = ISO8601DateFormatter()
-        f.formatOptions = [.withFullDate, .withDashSeparatorInDate]
-        return f
-    }()
-
-    /// Parse an ISO-8601 date string from the model. Accepts either
-    /// "YYYY-MM-DD" or full datetime strings; returns nil for malformed
-    /// input so the validator simply treats the date as not asserted.
-    private static func parseISO8601(_ raw: String) -> Date? {
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let date = iso8601DateFormatter.date(from: trimmed) {
-            return date
-        }
-        // Fallback: full-precision ISO-8601 (with time and timezone).
-        let full = ISO8601DateFormatter()
-        return full.date(from: trimmed)
+    private static func parseISO8601(_ string: String) -> Date? {
+        Self.iso8601DateFormatter.date(from: string)
     }
+
+    private static let iso8601DateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = .current
+        return f
+    }()
 }
 
-// MARK: - Decimal Helpers
+// MARK: - Decimal helper
 
 private extension Decimal {
     func asCurrencyString() -> String {

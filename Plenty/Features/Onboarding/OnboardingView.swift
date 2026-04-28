@@ -4,20 +4,20 @@
 //
 //  Target path: Plenty/Features/Onboarding/OnboardingView.swift
 //
-//  Shown on first launch (and any time the user opens an empty app
-//  with the "show onboarding" UserDefault still true). Three calm
-//  pages plus a final picker:
+//  Phase 9 (v2): four-page onboarding aligned with v2's hero formula.
 //
-//    1. Welcome — Plenty in one sentence
-//    2. Privacy — what stays on the device, what leaves
-//    3. Picker — Start fresh / Start with demo data
-//
-//  No bank-sync sales pitch, no marketing flourish. The PRD's voice
-//  rules apply: second person, possession-leading, no exclamations.
+//    1. Welcome  — Plenty in one sentence (v2 voice)
+//    2. Formula  — what the hero number actually is, with the
+//                  + income / − bills / − expenses breakdown. NEW in v2.
+//    3. Privacy  — what stays on device, what leaves
+//    4. Picker   — Start fresh / Start with demo data
 //
 //  Wiring: PlentyApp checks `OnboardingView.shouldShow` at launch and
 //  presents this as a fullScreenCover when true. Tapping either choice
 //  marks onboarding complete and dismisses.
+//
+//  v2 voice rules apply throughout: second person, possession-leading,
+//  no exclamations, no marketing flourish.
 //
 
 import SwiftUI
@@ -46,7 +46,7 @@ struct OnboardingView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var page: Int = 0
-    private let lastPage = 2
+    private let lastPage = 3
 
     // MARK: - Body
 
@@ -54,8 +54,9 @@ struct OnboardingView: View {
         VStack(spacing: 0) {
             TabView(selection: $page) {
                 welcomePage.tag(0)
-                privacyPage.tag(1)
-                pickerPage.tag(2)
+                formulaPage.tag(1)
+                privacyPage.tag(2)
+                pickerPage.tag(3)
             }
             .tabViewStyle(.page(indexDisplayMode: .always))
             .indexViewStyle(.page(backgroundDisplayMode: .always))
@@ -68,7 +69,7 @@ struct OnboardingView: View {
         .interactiveDismissDisabled()
     }
 
-    // MARK: - Pages
+    // MARK: - Welcome
 
     private var welcomePage: some View {
         VStack(spacing: 24) {
@@ -91,7 +92,7 @@ struct OnboardingView: View {
                     .foregroundStyle(.primary)
                     .multilineTextAlignment(.center)
 
-                Text("It tells you what you have, not what you've spent. Pay once. Yours forever.")
+                Text("It tells you how much of this month's money you have left. Pay once. Yours forever.")
                     .font(Typography.Body.regular)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -103,6 +104,76 @@ struct OnboardingView: View {
         }
         .padding(.horizontal, 24)
     }
+
+    // MARK: - Formula (NEW in v2)
+
+    private var formulaPage: some View {
+        VStack(spacing: 28) {
+            Spacer()
+
+            Image(systemName: "equal.circle")
+                .font(.system(size: 56, weight: .light))
+                .foregroundStyle(Theme.sage)
+                .symbolRenderingMode(.hierarchical)
+
+            VStack(spacing: 12) {
+                Text("One question, one number")
+                    .font(Typography.Title.medium)
+                    .foregroundStyle(.primary)
+                    .multilineTextAlignment(.center)
+
+                Text("Plenty's job is to answer this every day:")
+                    .font(Typography.Body.regular)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 24)
+            }
+
+            formulaCard
+                .padding(.horizontal, 24)
+
+            Text("Expected paychecks don't count until you confirm them. Bills count whether or not you've paid them.")
+                .font(Typography.Support.footnote)
+                .foregroundStyle(.tertiary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 32)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Spacer()
+            Spacer()
+        }
+    }
+
+    private var formulaCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            formulaRow(symbol: "+", label: "Confirmed income",       color: Theme.sage)
+            formulaRow(symbol: "−", label: "Bills (paid + unpaid)",  color: .secondary)
+            formulaRow(symbol: "−", label: "Expenses you've logged", color: .secondary)
+            Divider().padding(.vertical, 4)
+            formulaRow(symbol: "=", label: "What's left this month", color: .primary, emphasis: true)
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
+                .fill(Theme.cardSurface)
+        )
+    }
+
+    private func formulaRow(symbol: String, label: String, color: Color, emphasis: Bool = false) -> some View {
+        HStack(spacing: 14) {
+            Text(symbol)
+                .font(.system(size: 18, weight: .medium, design: .rounded).monospacedDigit())
+                .foregroundStyle(color)
+                .frame(width: 18)
+            Text(label)
+                .font(emphasis ? Typography.Body.emphasis : Typography.Body.regular)
+                .foregroundStyle(.primary)
+            Spacer()
+        }
+    }
+
+    // MARK: - Privacy
 
     private var privacyPage: some View {
         VStack(spacing: 24) {
@@ -145,6 +216,29 @@ struct OnboardingView: View {
         }
     }
 
+    private func privacyRow(icon: String, title: String, body: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: icon)
+                .font(.body)
+                .foregroundStyle(Theme.sage)
+                .symbolRenderingMode(.hierarchical)
+                .frame(width: 24, alignment: .center)
+                .padding(.top, 2)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(Typography.Body.emphasis)
+                    .foregroundStyle(.primary)
+                Text(body)
+                    .font(Typography.Support.footnote)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    // MARK: - Picker
+
     private var pickerPage: some View {
         VStack(spacing: 24) {
             Spacer()
@@ -164,7 +258,7 @@ struct OnboardingView: View {
                 pickerCard(
                     icon: "square.dashed",
                     title: "Start fresh",
-                    subtitle: "An empty app. Add your accounts and bills as you go.",
+                    subtitle: "An empty app. Add your income and bills as you go.",
                     accent: Theme.sage,
                     action: startFresh
                 )
@@ -181,29 +275,6 @@ struct OnboardingView: View {
 
             Spacer()
             Spacer()
-        }
-    }
-
-    // MARK: - Sub-Views
-
-    private func privacyRow(icon: String, title: String, body: String) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: icon)
-                .font(.body)
-                .foregroundStyle(Theme.sage)
-                .symbolRenderingMode(.hierarchical)
-                .frame(width: 24, alignment: .center)
-                .padding(.top, 2)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(Typography.Body.emphasis)
-                    .foregroundStyle(.primary)
-                Text(body)
-                    .font(Typography.Support.footnote)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
         }
     }
 
@@ -231,6 +302,7 @@ struct OnboardingView: View {
                         .font(Typography.Support.footnote)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
 
                 Spacer()

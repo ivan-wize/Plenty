@@ -4,9 +4,18 @@
 //
 //  Target path: Plenty/Engine/IncomeEntryGenerator.swift
 //
-//  Generates expected income `Transaction` records from active
-//  `IncomeSource` templates. Fully idempotent with the following safety
-//  layers:
+//  Phase 4 (v2): the active-sources fetch now also filters by
+//  `rolloverEnabled`. Sources with rollover OFF are dormant — they
+//  don't auto-materialize in any month. Users bring them forward
+//  manually via the "Copy from previous month" sheet on the Income
+//  tab.
+//
+//  Confirmed and skipped entries from a source are never affected by
+//  toggling rollover. Only future expected materializations stop.
+//
+//  Generates expected income `Transaction` records from active+rolling
+//  `IncomeSource` templates. Fully idempotent with the following
+//  safety layers:
 //
 //    • Stable dedupe key "sourceID:yyyy-MM-dd"
 //    • Advisory file lock (flock) so concurrent generations serialize
@@ -14,9 +23,6 @@
 //      land duplicates from another device)
 //    • Inactive-source cleanup and legacy backfill
 //    • Status priority (confirmed > skipped > expected) when pruning
-//
-//  Port from Left. Logger subsystem renamed to com.plenty.app. App
-//  Group ID renamed to group.com.plenty.app for the lock file path.
 //
 
 import Foundation
@@ -37,10 +43,10 @@ final class IncomeEntryGenerator {
 
     // MARK: - Public API
 
-    /// Backfill missing dedupe keys, reconcile duplicates, and ensure the
-    /// month's expected entries exist. Safest entry point for surfaces
-    /// that may run before the iPhone app has opened for the month
-    /// (Shortcuts, Watch, widgets).
+    /// Backfill missing dedupe keys, reconcile duplicates, and ensure
+    /// the month's expected entries exist. Safest entry point for
+    /// surfaces that may run before the iPhone app has opened for the
+    /// month (Shortcuts, Watch, widgets).
     func prepareExpectedEntries(
         month: Int,
         year: Int,
@@ -54,13 +60,14 @@ final class IncomeEntryGenerator {
     }
 
     /// Generate expected income transactions for a month from every
-    /// active source. Uses the dedupe key, advisory lock, and
-    /// reconciliation pass to handle concurrent and cross-device cases.
+    /// active *and rolling* source. Sources with rolloverEnabled = false
+    /// are skipped here (the user opts in via the copy-from-previous
+    /// flow on the Income tab).
     func generateExpectedEntries(month: Int, year: Int) throws {
         try withGenerationLock {
             let cal = Calendar.current
             let existing = try fetchIncomeTransactions(month: month, year: year)
-            let activeSources = try fetchActiveSources()
+            let activeSources = try fetchActiveAndRollingSources()
 
             var existingKeys = Set(existing.compactMap(\.dedupeKey))
             var insertedCount = 0
@@ -76,9 +83,10 @@ final class IncomeEntryGenerator {
                     // Primary dedupe: keys we've seen.
                     guard !existingKeys.contains(key) else { continue }
 
-                    // Same-source same-day fallback. Catches legacy entries
-                    // without a dedupeKey, plus entries whose key was formed
-                    // in a different timezone (DST or travel).
+                    // Same-source same-day fallback. Catches legacy
+                    // entries without a dedupeKey, plus entries whose
+                    // key was formed in a different timezone (DST or
+                    // travel).
                     let sameDayMatch = existing.contains { tx in
                         tx.incomeSource?.id == source.id &&
                         cal.isDate(tx.date, inSameDayAs: payDate)
@@ -110,9 +118,9 @@ final class IncomeEntryGenerator {
 
     // MARK: - Source Lifecycle
 
-    /// Remove every `.expected` entry tied to a given source. Called when
-    /// the user deactivates or deletes a source. Confirmed and skipped
-    /// entries are preserved as historical record.
+    /// Remove every `.expected` entry tied to a given source. Called
+    /// when the user deactivates or deletes a source. Confirmed and
+    /// skipped entries are preserved as historical record.
     @discardableResult
     func purgeExpectedEntries(for source: IncomeSource) throws -> Int {
         let targetID = source.id
@@ -133,9 +141,9 @@ final class IncomeEntryGenerator {
         return toDelete.count
     }
 
-    /// Defensive sweep for stale `.expected` entries whose source is now
-    /// inactive. Intended to run once on app launch. Leaves nil-source
-    /// entries alone (could still be in-flight via CloudKit).
+    /// Defensive sweep for stale `.expected` entries whose source is
+    /// now inactive. Intended to run once on app launch. Leaves
+    /// nil-source entries alone (could still be in-flight via CloudKit).
     @discardableResult
     func purgeInactiveSourceExpectedEntries() throws -> Int {
         let descriptor = FetchDescriptor<Transaction>(
@@ -158,8 +166,8 @@ final class IncomeEntryGenerator {
         return stale.count
     }
 
-    /// One-time migration: backfill `dedupeKey` on entries that lack one,
-    /// and remove duplicates that share the same key.
+    /// One-time migration: backfill `dedupeKey` on entries that lack
+    /// one, and remove duplicates that share the same key.
     @discardableResult
     func backfillDedupeKeys() throws -> (backfilled: Int, deduped: Int) {
         try withGenerationLock {
@@ -184,7 +192,7 @@ final class IncomeEntryGenerator {
         }
     }
 
-    // MARK: - Key
+    // MARK: - Dedupe Key
 
     static func makeDedupeKey(sourceID: UUID, payDate: Date) -> String {
         "\(sourceID.uuidString):\(Self.dedupeFormatter.string(from: payDate))"
@@ -194,9 +202,6 @@ final class IncomeEntryGenerator {
         let f = DateFormatter()
         f.dateFormat = "yyyy-MM-dd"
         f.locale = Locale(identifier: "en_US_POSIX")
-        // Fixed UTC so the key is stable across TZ changes and DST. The
-        // same-day fallback in the dedupe check handles cases where a
-        // stored date drifts across calendar days between timezones.
         f.timeZone = TimeZone(identifier: "UTC") ?? .gmt
         return f
     }()
@@ -211,68 +216,72 @@ final class IncomeEntryGenerator {
         switch source.frequency {
         case .monthly:
             var comps = cal.dateComponents([.year, .month], from: monthDate)
-            comps.day = min(source.dayOfMonth, cal.range(of: .day, in: .month, for: monthDate)?.count ?? source.dayOfMonth)
+            comps.day = min(source.dayOfMonth, cal.range(of: .day, in: .month, for: monthDate)?.count ?? 28)
             return [cal.date(from: comps)].compactMap { $0 }
 
         case .semimonthly:
+            let firstDay = source.dayOfMonth
+            let secondDay = source.secondDayOfMonth ?? 15
+            let monthDays = cal.range(of: .day, in: .month, for: monthDate)?.count ?? 28
             var dates: [Date] = []
-            let daysInMonth = cal.range(of: .day, in: .month, for: monthDate)?.count ?? 31
-            for day in [source.dayOfMonth, source.secondDayOfMonth ?? 15] {
+            for day in [firstDay, secondDay] {
                 var comps = cal.dateComponents([.year, .month], from: monthDate)
-                comps.day = min(day, daysInMonth)
-                if let date = cal.date(from: comps) {
-                    dates.append(date)
-                }
+                comps.day = min(day, monthDays)
+                if let d = cal.date(from: comps) { dates.append(d) }
             }
             return dates.sorted()
 
-        case .weekly:
-            return weeklyOccurrences(in: monthDate, weekday: source.weekday, every: 7, anchor: source.biweeklyAnchor)
-
-        case .biweekly:
-            return weeklyOccurrences(in: monthDate, weekday: source.weekday, every: 14, anchor: source.biweeklyAnchor)
+        case .weekly, .biweekly:
+            return weeklyOrBiweeklyPayDates(in: monthDate, source: source, calendar: cal)
         }
     }
 
-    private func weeklyOccurrences(in monthDate: Date, weekday: Int, every stepDays: Int, anchor: Date?) -> [Date] {
-        let cal = Calendar.current
-        guard
-            let monthStart = cal.dateInterval(of: .month, for: monthDate)?.start,
-            let monthEndExclusive = cal.dateInterval(of: .month, for: monthDate)?.end
-        else { return [] }
+    private func weeklyOrBiweeklyPayDates(
+        in monthDate: Date,
+        source: IncomeSource,
+        calendar cal: Calendar
+    ) -> [Date] {
+        guard let monthRange = cal.range(of: .day, in: .month, for: monthDate) else { return [] }
+        let comps = cal.dateComponents([.year, .month], from: monthDate)
+        guard let firstOfMonth = cal.date(from: comps) else { return [] }
 
-        let monthEnd = cal.date(byAdding: .second, value: -1, to: monthEndExclusive) ?? monthEndExclusive
+        // Find the first occurrence of the source.weekday on or after
+        // firstOfMonth.
+        let firstWeekday = cal.component(.weekday, from: firstOfMonth) - 1  // 0-indexed
+        let target = source.weekday
+        var offset = (target - firstWeekday + 7) % 7
+        guard let firstHit = cal.date(byAdding: .day, value: offset, to: firstOfMonth) else { return [] }
 
-        // Start from anchor or first matching weekday in the month.
-        var cursor: Date
-        if let anchor {
-            cursor = anchor
-            while cursor < monthStart {
-                guard let next = cal.date(byAdding: .day, value: stepDays, to: cursor) else { return [] }
-                cursor = next
+        var dates: [Date] = []
+        var current = firstHit
+        let stride: Int = source.frequency == .weekly ? 7 : 14
+
+        // For biweekly, snap to the parity defined by biweeklyAnchor.
+        if source.frequency == .biweekly, let anchor = source.biweeklyAnchor {
+            let daysFromAnchor = cal.dateComponents([.day], from: anchor, to: current).day ?? 0
+            let parity = ((daysFromAnchor % 14) + 14) % 14
+            if parity != 0 {
+                let shift = parity <= 7 ? -parity : (14 - parity)
+                if let adjusted = cal.date(byAdding: .day, value: shift, to: current) {
+                    current = adjusted
+                }
             }
-        } else {
-            // First occurrence of weekday in month.
-            var comps = cal.dateComponents([.year, .month], from: monthDate)
-            comps.day = 1
-            guard let monthFirst = cal.date(from: comps) else { return [] }
-            let firstWeekday = cal.component(.weekday, from: monthFirst) - 1  // Sunday=0
-            let offset = (weekday - firstWeekday + 7) % 7
-            cursor = cal.date(byAdding: .day, value: offset, to: monthFirst) ?? monthFirst
         }
 
-        var results: [Date] = []
-        while cursor <= monthEnd {
-            if cursor >= monthStart {
-                results.append(cursor)
+        // Walk through the month emitting dates that fall in range.
+        while cal.component(.month, from: current) == comps.month {
+            if cal.component(.day, from: current) >= 1,
+               cal.component(.day, from: current) <= monthRange.count {
+                dates.append(current)
             }
-            guard let next = cal.date(byAdding: .day, value: stepDays, to: cursor) else { break }
-            cursor = next
+            guard let next = cal.date(byAdding: .day, value: stride, to: current) else { break }
+            current = next
         }
-        return results
+
+        return dates
     }
 
-    // MARK: - Fetching
+    // MARK: - Fetches
 
     private func fetchIncomeTransactions(month: Int, year: Int) throws -> [Transaction] {
         let descriptor = FetchDescriptor<Transaction>(
@@ -283,56 +292,45 @@ final class IncomeEntryGenerator {
         return try context.fetch(descriptor)
     }
 
-    private func fetchActiveSources() throws -> [IncomeSource] {
+    /// v2 — only sources that are both active AND have rollover enabled.
+    /// Sources with rollover OFF are valid templates the user wants to
+    /// keep around but doesn't want auto-materializing each month.
+    private func fetchActiveAndRollingSources() throws -> [IncomeSource] {
         let descriptor = FetchDescriptor<IncomeSource>(
-            predicate: #Predicate { $0.isActive == true },
-            sortBy: [SortDescriptor(\IncomeSource.createdAt)]
+            predicate: #Predicate { source in
+                source.isActive && source.rolloverEnabled
+            }
         )
         return try context.fetch(descriptor)
     }
 
     // MARK: - Duplicate Reconciliation
 
+    /// When two transactions share the same dedupeKey (e.g. one from
+    /// local generation, one synced via CloudKit), keep the highest
+    /// status priority and drop the other.
     private func reconcileDuplicates(in transactions: [Transaction]) throws -> Int {
-        let keyed = Dictionary(grouping: transactions.compactMap { tx -> (String, Transaction)? in
-            guard let key = tx.dedupeKey else { return nil }
-            return (key, tx)
-        }, by: \.0)
+        var byKey: [String: [Transaction]] = [:]
+        for tx in transactions {
+            guard let key = tx.dedupeKey else { continue }
+            byKey[key, default: []].append(tx)
+        }
 
         var deletedCount = 0
-
-        for group in keyed.values {
-            let duplicates = group.map(\.1)
-            guard duplicates.count > 1, let survivor = preferredSurvivor(in: duplicates) else {
-                continue
+        for (_, group) in byKey where group.count > 1 {
+            // Status priority: confirmed > skipped > expected
+            let sorted = group.sorted { lhs, rhs in
+                statusPriority(lhs.incomeStatus) > statusPriority(rhs.incomeStatus)
             }
-
-            for tx in duplicates where tx.persistentModelID != survivor.persistentModelID {
-                context.delete(tx)
+            for duplicate in sorted.dropFirst() {
+                context.delete(duplicate)
                 deletedCount += 1
             }
         }
-
         return deletedCount
     }
 
-    /// Survivor priority: confirmed > skipped > expected; tiebreak by
-    /// earliest createdAt so behavior is stable across runs.
-    private func preferredSurvivor(in transactions: [Transaction]) -> Transaction? {
-        transactions.reduce(nil) { currentBest, candidate in
-            guard let currentBest else { return candidate }
-            return shouldPrefer(candidate, over: currentBest) ? candidate : currentBest
-        }
-    }
-
-    private func shouldPrefer(_ candidate: Transaction, over current: Transaction) -> Bool {
-        let candidateRank = statusRank(candidate.incomeStatus)
-        let currentRank = statusRank(current.incomeStatus)
-        if candidateRank != currentRank { return candidateRank > currentRank }
-        return candidate.createdAt < current.createdAt
-    }
-
-    private func statusRank(_ status: IncomeStatus) -> Int {
+    private func statusPriority(_ status: IncomeStatus) -> Int {
         switch status {
         case .confirmed: return 2
         case .skipped:   return 1
@@ -340,35 +338,41 @@ final class IncomeEntryGenerator {
         }
     }
 
-    // MARK: - Advisory Lock
+    // MARK: - Generation Lock
 
-    /// Serialize generations across same-process contexts. CloudKit
-    /// duplicates from another device are handled by reconcileDuplicates.
-    private func withGenerationLock<T>(_ work: () throws -> T) throws -> T {
-        let url = lockFileURL()
-        let fd = open(url.path, O_RDWR | O_CREAT, 0o644)
+    /// Wrap the generation block in an advisory file lock so concurrent
+    /// invocations (Watch + iPhone, intent + app) serialize.
+    private func withGenerationLock<T>(_ body: () throws -> T) throws -> T {
+        guard let lockURL = lockFileURL() else {
+            return try body()
+        }
+
+        // Ensure the lock file exists.
+        if !FileManager.default.fileExists(atPath: lockURL.path) {
+            FileManager.default.createFile(atPath: lockURL.path, contents: nil)
+        }
+
+        let fd = open(lockURL.path, O_RDWR)
         guard fd >= 0 else {
-            // Lock file unavailable; proceed without serialization.
-            // Reconciliation still cleans up any duplicates that result.
-            return try work()
+            return try body()
         }
         defer { close(fd) }
 
-        let lockResult = flock(fd, LOCK_EX)
-        if lockResult != 0 {
-            // Failed to acquire lock; proceed unlocked. Reconciliation
-            // catches any resulting duplicates.
-            logger.warning("Failed to acquire generation lock; proceeding unlocked")
-            return try work()
-        }
-        defer { _ = flock(fd, LOCK_UN) }
+        flock(fd, LOCK_EX)
+        defer { flock(fd, LOCK_UN) }
 
-        return try work()
+        return try body()
     }
 
-    private func lockFileURL() -> URL {
-        let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
-            ?? URL(fileURLWithPath: NSTemporaryDirectory())
-        return dir.appendingPathComponent(Self.generationLockFilename)
+    private func lockFileURL() -> URL? {
+        let appGroupID = "group.com.plenty.app"
+        guard let containerURL = FileManager.default.containerURL(
+            forSecurityApplicationGroupIdentifier: appGroupID
+        ) else {
+            return FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)
+                .first?
+                .appendingPathComponent(Self.generationLockFilename)
+        }
+        return containerURL.appendingPathComponent(Self.generationLockFilename)
     }
 }

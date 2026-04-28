@@ -5,14 +5,17 @@
 //  Target path: PlentyWatch/WatchHomeView.swift
 //  Watch target: PlentyWatch
 //
-//  The Watch home view. Three sections:
+//  Phase 8 (v2): Watch home view aligned with the v2 hero. Reads
+//  `snapshot.monthlyBudgetRemaining` instead of `spendable` and uses
+//  the v2 two-state color logic (sage / terracotta).
 //
-//    1. Hero — spendable number, big and centered
+//  Three sections:
+//    1. Hero — monthlyBudgetRemaining, big and centered
 //    2. Bills glance — count + total of unpaid bills, tap to checklist
 //    3. Income glance — expected income today/tomorrow with quick confirm
 //
-//  Sections render only when relevant. Empty home (no bills, no income)
-//  shows just the hero.
+//  Sections render only when relevant. Empty home (no bills, no
+//  income) shows just the hero.
 //
 
 import SwiftUI
@@ -47,7 +50,7 @@ struct WatchHomeView: View {
             .sorted { $0.dueDay < $1.dueDay }
     }
 
-    /// Expected income due today or earlier (a paycheck waiting to be confirmed).
+    /// Expected income due today or earlier.
     private var pendingIncome: Transaction? {
         let cal = Calendar.current
         return allTransactions
@@ -55,6 +58,14 @@ struct WatchHomeView: View {
             .filter { $0.date <= cal.date(byAdding: .day, value: 1, to: .now)! }
             .sorted { $0.date < $1.date }
             .first
+    }
+
+    private var isOverBudget: Bool {
+        snapshot.monthlyBudgetRemaining < 0
+    }
+
+    private var hasNoData: Bool {
+        snapshot.zone == .empty
     }
 
     // MARK: - Body
@@ -73,7 +84,7 @@ struct WatchHomeView: View {
                         billsCard
                     }
 
-                    if unpaidBills.isEmpty && pendingIncome == nil && snapshot.zone != .empty {
+                    if unpaidBills.isEmpty && pendingIncome == nil && !hasNoData {
                         allCaughtUpCard
                     }
                 }
@@ -89,7 +100,7 @@ struct WatchHomeView: View {
 
     private var heroSection: some View {
         VStack(spacing: 4) {
-            Text("Spendable")
+            Text(captionText)
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(.secondary)
                 .textCase(.uppercase)
@@ -102,12 +113,14 @@ struct WatchHomeView: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.5)
 
-            if let burn = snapshot.sustainableDailyBurn, burn > 0, snapshot.zone != .over {
+            if let burn = snapshot.sustainableDailyBurn,
+               burn > 0,
+               !isOverBudget {
                 Text("~\(burn.asCompactCurrency())/day")
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
-            } else if snapshot.zone == .over {
-                Text("Over your margin")
+            } else if isOverBudget {
+                Text("Over budget")
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(Theme.terracotta)
             }
@@ -127,25 +140,25 @@ struct WatchHomeView: View {
                     .foregroundStyle(Theme.sage)
 
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("\(unpaidBills.count) \(unpaidBills.count == 1 ? "bill" : "bills") due")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.primary)
-                    Text(snapshot.billsRemaining.asCompactCurrency())
-                        .font(.system(size: 10))
+                    Text("\(unpaidBills.count) \(unpaidBills.count == 1 ? "bill" : "bills")")
+                        .font(.system(size: 13, weight: .semibold))
+                    Text(unpaidBills.reduce(Decimal.zero) { $0 + $1.amount }.asCompactCurrency())
+                        .font(.system(size: 11))
                         .foregroundStyle(.secondary)
+                        .monospacedDigit()
                 }
 
                 Spacer()
 
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 9, weight: .bold))
+                    .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(.tertiary)
             }
             .padding(.horizontal, 10)
-            .padding(.vertical, 10)
+            .padding(.vertical, 8)
             .background(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Theme.sage.opacity(0.12))
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color.secondary.opacity(0.1))
             )
         }
         .buttonStyle(.plain)
@@ -155,7 +168,7 @@ struct WatchHomeView: View {
 
     private func confirmIncomeCard(for income: Transaction) -> some View {
         NavigationLink {
-            WatchConfirmIncomeView(transaction: income)
+            WatchConfirmIncomeView(income: income)
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: "arrow.down.circle")
@@ -163,25 +176,25 @@ struct WatchHomeView: View {
                     .foregroundStyle(Theme.sage)
 
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("Confirm \(income.name)")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.primary)
+                    Text(income.name)
+                        .font(.system(size: 13, weight: .semibold))
                         .lineLimit(1)
-                    Text(income.expectedAmount.asCompactCurrency())
-                        .font(.system(size: 10))
+                    Text("Tap to confirm")
+                        .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                 }
 
                 Spacer()
 
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(.tertiary)
+                Text((income.expectedAmount > 0 ? income.expectedAmount : income.amount).asCompactCurrency())
+                    .font(.system(size: 13, weight: .semibold))
+                    .monospacedDigit()
+                    .foregroundStyle(Theme.sage)
             }
             .padding(.horizontal, 10)
-            .padding(.vertical, 10)
+            .padding(.vertical, 8)
             .background(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .fill(Theme.sage.opacity(0.12))
             )
         }
@@ -191,49 +204,43 @@ struct WatchHomeView: View {
     // MARK: - All Caught Up
 
     private var allCaughtUpCard: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 14))
+        HStack(spacing: 8) {
+            Image(systemName: "checkmark.circle")
+                .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(Theme.sage)
+
             Text("All caught up")
-                .font(.system(size: 11, weight: .medium))
+                .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(.secondary)
+
+            Spacer()
         }
-        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 10)
         .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.secondary.opacity(0.08))
+        )
     }
 
     // MARK: - Computed
 
+    private var captionText: String {
+        if hasNoData {
+            return "Budget"
+        }
+        return isOverBudget ? "Over by" : "Left"
+    }
+
     private var formattedAmount: String {
-        let abs = snapshot.spendable < 0 ? -snapshot.spendable : snapshot.spendable
-        let formatted = abs.asCompactCurrency()
-        return snapshot.spendable < 0 ? "−\(formatted)" : formatted
+        let abs = snapshot.monthlyBudgetRemaining < 0
+            ? -snapshot.monthlyBudgetRemaining
+            : snapshot.monthlyBudgetRemaining
+        return abs.asCompactCurrency()
     }
 
     private var numberColor: Color {
-        switch snapshot.zone {
-        case .empty:   return .secondary
-        case .safe:    return .primary
-        case .warning: return Theme.amber
-        case .over:    return Theme.terracotta
-        }
-    }
-}
-
-private extension Decimal {
-    func asCompactCurrency() -> String {
-        let value = NSDecimalNumber(decimal: self).doubleValue
-        let absValue = abs(value)
-        if absValue >= 1_000_000 {
-            return String(format: "$%.1fM", value / 1_000_000)
-        }
-        if absValue >= 10_000 {
-            return String(format: "$%.0fk", value / 1_000)
-        }
-        if absValue >= 1_000 {
-            return String(format: "$%.1fk", value / 1_000)
-        }
-        return String(format: "$%.0f", value)
+        if hasNoData { return .secondary }
+        return isOverBudget ? Theme.terracotta : Theme.sage
     }
 }

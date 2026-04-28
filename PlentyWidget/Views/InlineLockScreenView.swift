@@ -4,6 +4,9 @@
 //
 //  Target path: PlentyWidget/Views/InlineLockScreenView.swift
 //
+//  Phase 8 (v2): inline string moves from "spendable" / "past your
+//  margin" to "left this month" / "over budget."
+//
 //  Inline lock screen widget. Sits above the clock as a single line.
 //  Limited to ~50 characters and no formatting other than what
 //  WidgetKit allows for accessoryInline.
@@ -26,14 +29,16 @@ struct InlineLockScreenView: View {
 
     private var lineText: String {
         let amountString = formattedAmount
-        if entry.zone == .over {
-            return "\(amountString) past your margin"
+        if entry.isOverBudget {
+            return "\(amountString) over budget"
         }
-        return "\(amountString) spendable"
+        return "\(amountString) left this month"
     }
 
     private var formattedAmount: String {
-        let abs = entry.spendable < 0 ? -entry.spendable : entry.spendable
+        let abs = entry.monthlyBudgetRemaining < 0
+            ? -entry.monthlyBudgetRemaining
+            : entry.monthlyBudgetRemaining
         let value = NSDecimalNumber(decimal: abs).doubleValue
         let formatted: String
         if value >= 1_000 {
@@ -41,6 +46,6 @@ struct InlineLockScreenView: View {
         } else {
             formatted = String(format: "$%.0f", value)
         }
-        return entry.spendable < 0 ? "−\(formatted)" : formatted
+        return entry.isOverBudget ? "−\(formatted)" : formatted
     }
 }

@@ -4,81 +4,45 @@
 //
 //  Target path: Plenty/App/AppState.swift
 //
-//  Phase 0 (v2): clean four-tab enum, no legacy cases.
+//  Phase 5 (v2): added two scan-driven add-sheet cases:
 //
-//  v1 was never released, so this rewrites the Tab enum directly to the
-//  final four-tab shape: overview / income / expenses / plan. Settings
-//  is no longer a tab — it opens as a sheet from OverviewTopBar (P3).
+//    .expenseFromScan(ReceiptDraft, Data?)
+//      → Open AddExpenseSheet pre-filled with a ReceiptDraft and the
+//        captured image. Used after the document scanner classifies a
+//        document as a receipt.
 //
-//  Tab icons follow PDS §3:
-//    • Overview → "circle.grid.2x2"      (proposed; final call open)
-//    • Income   → "arrow.down.circle"
-//    • Expenses → "arrow.up.circle"
-//    • Plan     → "chart.line.uptrend.xyaxis"
+//    .billFromScan(BillDraft, Data?)
+//      → Open BillEditorSheet pre-filled with a BillDraft and the
+//        captured image. Used after the document scanner classifies a
+//        document as a bill.
 //
-//  PendingAddSheet is unchanged — every case is still reachable from
-//  the FAB menu (Overview), per-tab toolbars, or App Intents.
+//  Both cases use Equatable comparison by content; since drafts are
+//  pure value types, this is safe and stable across re-fetches.
 //
 
 import Foundation
-import Observation
+import SwiftUI
 
 @Observable
-@MainActor
 final class AppState {
 
-    // MARK: - Tab
+    // MARK: - Tabs
 
-    enum Tab: String, CaseIterable, Identifiable, Sendable {
-        case overview, income, expenses, plan
-
-        var id: String { rawValue }
-
-        var title: String {
-            switch self {
-            case .overview: return "Overview"
-            case .income:   return "Income"
-            case .expenses: return "Expenses"
-            case .plan:     return "Plan"
-            }
-        }
-
-        var systemImage: String {
-            switch self {
-            case .overview: return "circle.grid.2x2"
-            case .income:   return "arrow.down.circle"
-            case .expenses: return "arrow.up.circle"
-            case .plan:     return "chart.line.uptrend.xyaxis"
-            }
-        }
+    enum Tab: Hashable {
+        case overview
+        case income
+        case expenses
+        case plan
     }
 
     var selectedTab: Tab = .overview
 
-    // MARK: - Install Date
+    // MARK: - Settings sheet
 
-    private static let installDateKey = "plenty.installDate"
+    var showingSettingsSheet = false
 
-    var installDate: Date {
-        if let stored = UserDefaults.standard.object(forKey: Self.installDateKey) as? Date {
-            return stored
-        }
-        let now = Date.now
-        UserDefaults.standard.set(now, forKey: Self.installDateKey)
-        return now
-    }
+    // MARK: - Errors
 
-    // MARK: - Pro Access
-
-    var isProUnlocked: Bool = false
-
-    // MARK: - Last Error
-
-    /// The most recent app-level error worth surfacing to the user.
-    /// Set by services (CloudKitSyncMonitor, save handlers, etc.) when
-    /// something went wrong that needs user awareness. Cleared by
-    /// ErrorBanner when the user dismisses it, or automatically by
-    /// services when the underlying issue resolves.
     var lastError: PlentyError?
 
     // MARK: - Pending Add Sheet
@@ -87,8 +51,10 @@ final class AppState {
 
     enum PendingAddSheet: Identifiable, Equatable {
         case expense
+        case expenseFromScan(ReceiptDraft, Data?)
         case income(preferRecurring: Bool)
         case bill(existing: Transaction? = nil)
+        case billFromScan(BillDraft, Data?)
         case account(existing: Account? = nil)
         case updateBalance(Account)
         case confirmIncome(Transaction)
@@ -99,8 +65,10 @@ final class AppState {
         var id: String {
             switch self {
             case .expense:                          return "expense"
+            case .expenseFromScan:                  return "expense.scan"
             case .income(let recurring):            return "income.\(recurring)"
             case .bill(let existing):               return "bill.\(existing?.id.uuidString ?? "new")"
+            case .billFromScan:                     return "bill.scan"
             case .account(let existing):            return "account.\(existing?.id.uuidString ?? "new")"
             case .updateBalance(let account):       return "balance.\(account.id.uuidString)"
             case .confirmIncome(let transaction):   return "confirm.\(transaction.id.uuidString)"
@@ -110,17 +78,21 @@ final class AppState {
             }
         }
 
-        // Manual Equatable: compare by id so two fetches of the same
-        // record compare equal. Synthesized Equatable on @Model classes
-        // can be reference-based in subtle ways.
+        // Manual Equatable: compare by id where possible (so two
+        // fetches of the same record compare equal), and by content
+        // for the value-type-only cases.
         static func == (lhs: PendingAddSheet, rhs: PendingAddSheet) -> Bool {
             switch (lhs, rhs) {
             case (.expense, .expense):
                 return true
+            case (.expenseFromScan(let a, let aImg), .expenseFromScan(let b, let bImg)):
+                return a == b && aImg == bImg
             case (.income(let a), .income(let b)):
                 return a == b
             case (.bill(let a), .bill(let b)):
                 return a?.id == b?.id
+            case (.billFromScan(let a, let aImg), .billFromScan(let b, let bImg)):
+                return a == b && aImg == bImg
             case (.account(let a), .account(let b)):
                 return a?.id == b?.id
             case (.updateBalance(let a), .updateBalance(let b)):
@@ -138,10 +110,4 @@ final class AppState {
             }
         }
     }
-
-    // MARK: - Settings Sheet (P3 hookup)
-
-    /// Whether the Settings sheet is currently presented. Set true by
-    /// OverviewTopBar's gear button (P3); presented by RootView.
-    var showingSettingsSheet: Bool = false
 }

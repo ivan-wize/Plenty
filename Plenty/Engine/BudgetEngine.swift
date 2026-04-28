@@ -193,7 +193,7 @@ enum BudgetEngine {
 
             // Compare against next income (or end of month if none).
             let cutoff: Date
-            if let nextIncomeDate {
+            if let nextIncomeDate = nextIncomeDate {
                 cutoff = nextIncomeDate
             } else if let endOfMonth = calendar.endOfMonth(for: reference) {
                 cutoff = endOfMonth
@@ -337,3 +337,4 @@ enum BudgetEngine {
         return out
     }
 }
+

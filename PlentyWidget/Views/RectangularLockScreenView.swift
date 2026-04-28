@@ -4,13 +4,13 @@
 //
 //  Target path: PlentyWidget/Views/RectangularLockScreenView.swift
 //
-//  Lock screen rectangular widget. Three lines:
-//    Line 1: "Spendable" label (caption)
-//    Line 2: hero number (rounded bold)
-//    Line 3: contextual sub-line (next bill or per-day burn)
+//  Phase 8 (v2): three-line lock-screen widget. Reads
+//  `monthlyBudgetRemaining` for the headline.
 //
-//  Also used as the watchOS accessoryRectangular complication —
-//  the layout works identically on both surfaces.
+//  Layout:
+//    Plenty                           ← wordmark (top, secondary)
+//    $1,840 left                      ← number + state
+//    ~$92/day or 2 bills $640         ← context line (optional)
 //
 
 import SwiftUI
@@ -23,78 +23,99 @@ struct RectangularLockScreenView: View {
     var body: some View {
         if entry.isUnavailable {
             unavailableView
+        } else if !entry.hasAnyData {
+            emptyView
         } else {
             contentView
         }
     }
 
-    // MARK: - Content
-
     private var contentView: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text("Spendable")
-                .font(.caption2.weight(.medium))
+            Text("Plenty")
+                .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.secondary)
 
-            Text(formattedAmount)
-                .font(.system(size: 18, weight: .bold, design: .rounded))
-                .monospacedDigit()
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(formattedAmount)
+                    .font(.system(size: 18, weight: .bold, design: .rounded))
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+                Text(stateText)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+            }
 
             if let subline = subLineText {
                 Text(subline)
-                    .font(.caption2)
+                    .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
     }
-
-    // MARK: - Unavailable
 
     private var unavailableView: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text("Plenty")
-                .font(.caption2.weight(.bold))
+                .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.secondary)
             Text("Open the app")
-                .font(.caption.weight(.semibold))
+                .font(.system(size: 13, weight: .semibold))
             Text("to refresh")
-                .font(.caption2)
+                .font(.system(size: 11))
                 .foregroundStyle(.secondary)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+    }
+
+    private var emptyView: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("Plenty")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+            Text("Set up to see your number")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
     }
 
     // MARK: - Computed
 
     private var formattedAmount: String {
-        let abs = entry.spendable < 0 ? -entry.spendable : entry.spendable
-        let formatted = abs.asPlainCurrency()
-        return entry.spendable < 0 ? "−\(formatted)" : formatted
+        let abs = entry.monthlyBudgetRemaining < 0
+            ? -entry.monthlyBudgetRemaining
+            : entry.monthlyBudgetRemaining
+        let value = NSDecimalNumber(decimal: abs).doubleValue
+        let formatted: String
+        if value >= 1_000_000 {
+            formatted = String(format: "$%.1fM", value / 1_000_000)
+        } else if value >= 1_000 {
+            formatted = String(format: "$%.1fk", value / 1_000)
+        } else {
+            formatted = String(format: "$%.0f", value)
+        }
+        return entry.isOverBudget ? "−\(formatted)" : formatted
+    }
+
+    private var stateText: String {
+        entry.isOverBudget ? "over" : "left"
     }
 
     private var subLineText: String? {
-        if entry.zone == .over { return "Over your margin" }
-        if let billName = entry.nextBillName,
-           let amount = entry.nextBillAmount,
-           let dueDay = entry.nextBillDueDay {
-            return "\(billName) \(amount.asPlainCurrency()) · \(dueDay.ordinalString)"
+        if !entry.isOverBudget,
+           let burn = entry.sustainableDailyBurn,
+           burn > 0 {
+            return "~\(burn.asCompactCurrency())/day"
         }
-        if let burn = entry.sustainableDailyBurn, burn > 0 {
-            return "~\(burn.asPlainCurrency())/day"
+        if entry.billsRemainingCount > 0 {
+            let plural = entry.billsRemainingCount == 1 ? "bill" : "bills"
+            return "\(entry.billsRemainingCount) \(plural) \(entry.billsRemaining.asCompactCurrency())"
         }
         return nil
-    }
-}
-
-private extension Decimal {
-    func asPlainCurrency() -> String {
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .currency
-        formatter.maximumFractionDigits = 0
-        formatter.minimumFractionDigits = 0
-        return formatter.string(from: NSDecimalNumber(decimal: self)) ?? "$\(self)"
     }
 }

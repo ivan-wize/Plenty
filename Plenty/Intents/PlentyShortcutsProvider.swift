@@ -4,21 +4,23 @@
 //
 //  Target path: Plenty/Intents/PlentyShortcutsProvider.swift
 //
-//  Phase 4: 3 read intents.
-//  Phase 7: + 6 write intents.
+//  Phase 8 (v2): Siri trigger phrases updated to v2 vocabulary.
+//  "What's my spendable" → "What's my budget" / "What's left this
+//  month." Old phrases kept alongside new ones for muscle-memory
+//  continuity.
 //
-//  All nine intents now registered:
-//    Read:
-//      • GetPlentyIntent          — "How much do I have?"
-//      • MonthlySummaryIntent     — "Plenty monthly summary"
-//      • SpendingBreakdownIntent  — "Show my spending breakdown"
-//    Write:
-//      • AddExpenseIntent         — "Add expense in Plenty"
-//      • AddIncomeIntent          — "Log income in Plenty"
-//      • AddBillIntent            — "Add bill in Plenty"
-//      • MarkBillPaidIntent       — "Mark bill paid in Plenty"
-//      • LogSavingsIntent         — "Log savings in Plenty"
-//      • ConfirmIncomeIntent      — "Confirm my paycheck"
+//  Read intents (P4):
+//    • GetPlentyIntent          — "How much do I have?"
+//    • MonthlySummaryIntent     — "Plenty monthly summary"
+//    • SpendingBreakdownIntent  — "Show my spending breakdown"
+//
+//  Write intents (P7):
+//    • AddExpenseIntent         — "Add expense in Plenty"
+//    • AddIncomeIntent          — "Log income in Plenty"
+//    • AddBillIntent            — "Add bill in Plenty"
+//    • MarkBillPaidIntent       — "Mark bill paid in Plenty"
+//    • LogSavingsIntent         — "Log savings in Plenty"
+//    • ConfirmIncomeIntent      — "Confirm my paycheck"
 //
 
 import AppIntents
@@ -27,17 +29,18 @@ struct PlentyShortcutsProvider: AppShortcutsProvider {
 
     static var appShortcuts: [AppShortcut] {
 
-        // Read intents (Phase 4)
+        // Read intents
 
         AppShortcut(
             intent: GetPlentyIntent(),
             phrases: [
                 "How much do I have in \(.applicationName)",
-                "What's my spendable in \(.applicationName)",
-                "Check \(.applicationName)",
+                "What's my budget in \(.applicationName)",
                 "What's left in \(.applicationName)",
+                "What's left this month in \(.applicationName)",
+                "Check \(.applicationName)",
             ],
-            shortTitle: "Check Spendable",
+            shortTitle: "Check Budget",
             systemImageName: "dollarsign.circle"
         )
 
@@ -61,7 +64,7 @@ struct PlentyShortcutsProvider: AppShortcutsProvider {
             systemImageName: "chart.pie"
         )
 
-        // Write intents (Phase 7)
+        // Write intents
 
         AppShortcut(
             intent: AddExpenseIntent(),
@@ -96,7 +99,6 @@ struct PlentyShortcutsProvider: AppShortcutsProvider {
             intent: MarkBillPaidIntent(),
             phrases: [
                 "Mark bill paid in \(.applicationName)",
-                "Pay bill in \(.applicationName)",
             ],
             shortTitle: "Mark Bill Paid",
             systemImageName: "checkmark.circle"
@@ -106,7 +108,6 @@ struct PlentyShortcutsProvider: AppShortcutsProvider {
             intent: LogSavingsIntent(),
             phrases: [
                 "Log savings in \(.applicationName)",
-                "Save toward a goal in \(.applicationName)",
             ],
             shortTitle: "Log Savings",
             systemImageName: "leaf"
@@ -116,12 +117,9 @@ struct PlentyShortcutsProvider: AppShortcutsProvider {
             intent: ConfirmIncomeIntent(),
             phrases: [
                 "Confirm my paycheck in \(.applicationName)",
-                "Confirm income in \(.applicationName)",
             ],
             shortTitle: "Confirm Income",
-            systemImageName: "arrow.down.circle"
+            systemImageName: "checkmark.seal"
         )
     }
-
-    static let shortcutTileColor = ShortcutTileColor.grayGreen
 }

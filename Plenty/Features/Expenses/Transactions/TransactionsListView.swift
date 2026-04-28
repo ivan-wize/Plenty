@@ -2,14 +2,24 @@
 //  TransactionsListView.swift
 //  Plenty
 //
-//  Target path: Plenty/Features/Accounts/TransactionsListView.swift
+//  Target path: Plenty/Features/Expenses/Transactions/TransactionsListView.swift
 //
-//  All transactions, sorted newest-first, grouped by month. Optional
-//  kind filter via a Menu in the toolbar.
+//  Phase 5 (v2): month-scoped transactions list shown inside the
+//  Expenses tab's Transactions sub-tab.
 //
-//  Phase 5 has no edit-in-place: tapping a transaction is a no-op for
-//  now. Swipe-to-delete is supported. A future polish phase can add
-//  TransactionDetailView with edit.
+//  Replaces v1's all-time TransactionsListView. The all-time history
+//  still exists per-account via AccountTransactionsView (in
+//  Plan → Accounts), which is unchanged.
+//
+//  Filters in this view:
+//    • Month: from MonthScope
+//    • Kind:  expense + transfer (income lives in the Income tab,
+//             bills in the Bills sub-tab)
+//
+//  Affordances:
+//    • Total of expenses + transfers shown at the top of the section
+//    • Tap a row → AddExpenseSheet pre-filled for editing
+//    • Swipe-trailing → Delete
 //
 
 import SwiftUI
@@ -18,109 +28,115 @@ import SwiftData
 struct TransactionsListView: View {
 
     @Environment(\.modelContext) private var modelContext
-    @Environment(AppState.self) private var appState
+    @Environment(MonthScope.self) private var monthScope
 
-    @Query(sort: \Transaction.date, order: .reverse) private var allTransactions: [Transaction]
+    @Query private var allTransactions: [Transaction]
 
-    @State private var filter: KindFilter = .all
+    @State private var transactionToEdit: Transaction?
 
-    enum KindFilter: String, CaseIterable, Identifiable {
-        case all, expenses, transfers, income
+    // MARK: - Derived
 
-        var id: String { rawValue }
-
-        var displayName: String {
-            switch self {
-            case .all:        return "All"
-            case .expenses:   return "Expenses"
-            case .transfers:  return "Transfers"
-            case .income:     return "Income"
+    private var monthTransactions: [Transaction] {
+        let cal = Calendar.current
+        return allTransactions
+            .filter { tx in
+                guard tx.kind == .expense || tx.kind == .transfer else { return false }
+                let m = cal.component(.month, from: tx.date)
+                let y = cal.component(.year, from: tx.date)
+                return m == monthScope.month && y == monthScope.year
             }
-        }
-
-        func includes(_ tx: Transaction) -> Bool {
-            switch self {
-            case .all:       return tx.kind != .bill  // Bills are on their own list
-            case .expenses:  return tx.kind == .expense
-            case .transfers: return tx.kind == .transfer
-            case .income:    return tx.kind == .income
-            }
-        }
+            .sorted { $0.date > $1.date }
     }
 
-    private var filtered: [Transaction] {
-        allTransactions.filter(filter.includes)
-    }
-
-    private var grouped: [(key: String, value: [Transaction])] {
-        let groups = Dictionary(grouping: filtered) { tx -> String in
-            Self.groupFormatter.string(from: tx.date)
-        }
-        return groups.sorted { $0.value.first?.date ?? .distantPast > $1.value.first?.date ?? .distantPast }
+    private var expensesTotal: Decimal {
+        monthTransactions
+            .filter { $0.kind == .expense }
+            .reduce(Decimal.zero) { $0 + $1.amount }
     }
 
     // MARK: - Body
 
     var body: some View {
         Group {
-            if filtered.isEmpty {
-                ContentUnavailableView {
-                    Label("No transactions", systemImage: "list.bullet")
-                } description: {
-                    Text("Add an expense, income, or transfer with the Add button.")
-                } actions: {
-                    Button {
-                        appState.pendingAddSheet = .expense
-                    } label: {
-                        Text("Add expense").fontWeight(.semibold)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(Theme.sage)
-                }
+            if monthTransactions.isEmpty {
+                emptyState
             } else {
-                List {
-                    ForEach(grouped, id: \.key) { group in
-                        Section(group.key) {
-                            ForEach(group.value) { tx in
-                                TransactionRow(transaction: tx)
+                populated
+            }
+        }
+        .sheet(item: $transactionToEdit) { tx in
+            AddExpenseSheet(existing: tx)
+        }
+    }
+
+    // MARK: - Populated
+
+    private var populated: some View {
+        List {
+            Section {
+                ForEach(monthTransactions) { tx in
+                    TransactionRow(transaction: tx)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            // Only expenses are editable; transfers are
+                            // edited via the Accounts pane in P6.
+                            if tx.kind == .expense {
+                                transactionToEdit = tx
                             }
-                            .onDelete { indexSet in delete(at: indexSet, in: group.value) }
                         }
-                    }
+                        .swipeActions(edge: .trailing) {
+                            Button(role: .destructive) {
+                                delete(tx)
+                            } label: {
+                                Label("Delete", systemImage: "trash")
+                            }
+                        }
                 }
-                .listStyle(.insetGrouped)
+            } header: {
+                HStack {
+                    Text("Spent this month")
+                    Spacer()
+                    Text(expensesTotal.asPlainCurrency())
+                        .monospacedDigit()
+                }
+            } footer: {
+                Text("Tap a transaction to edit. Swipe to delete.")
             }
         }
-        .navigationTitle("Transactions")
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Menu {
-                    Picker("Filter", selection: $filter) {
-                        ForEach(KindFilter.allCases) { f in
-                            Text(f.displayName).tag(f)
-                        }
-                    }
-                } label: {
-                    Image(systemName: "line.3.horizontal.decrease.circle")
-                }
-            }
+        .listStyle(.insetGrouped)
+        .scrollContentBackground(.hidden)
+        .background(Theme.background)
+    }
+
+    // MARK: - Empty State
+
+    private var emptyState: some View {
+        ContentUnavailableView {
+            Label("No transactions yet", systemImage: "creditcard")
+                .foregroundStyle(Theme.sage)
+        } description: {
+            Text("Tap + below to add an expense, or scan a receipt.")
+                .multilineTextAlignment(.center)
         }
+        .padding(.bottom, 60)
     }
 
     // MARK: - Actions
 
-    private func delete(at offsets: IndexSet, in transactions: [Transaction]) {
-        for index in offsets {
-            modelContext.delete(transactions[index])
-        }
+    private func delete(_ tx: Transaction) {
+        modelContext.delete(tx)
         try? modelContext.save()
     }
+}
 
-    // MARK: - Formatter
+// MARK: - Decimal Helper
 
-    private static let groupFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "MMMM yyyy"
-        return f
-    }()
+private extension Decimal {
+    func asPlainCurrency() -> String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .currency
+        formatter.maximumFractionDigits = 0
+        formatter.minimumFractionDigits = 0
+        return formatter.string(from: NSDecimalNumber(decimal: self)) ?? "$\(self)"
+    }
 }

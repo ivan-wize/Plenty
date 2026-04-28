@@ -2,15 +2,24 @@
 //  BillEditorSheet.swift
 //  Plenty
 //
-//  Target path: Plenty/Features/Add/BillEditorSheet.swift
+//  Target path: Plenty/Features/Expenses/Bills/BillEditorSheet.swift
 //
-//  Combined add and edit for a bill. Fields: amount, name, due day,
-//  category, source account. Recurring is implicit (every bill uses
-//  the standard monthly RecurringRule for its due day).
+//  Phase 5 (v2): three init paths.
 //
-//  Phase 5 keeps recurrence simple: monthly only. If users need
-//  quarterly bills (HOA dues, insurance), they can add manually each
-//  time. A more flexible recurrence picker arrives later if requested.
+//    BillEditorSheet()
+//      → Add a new bill from scratch.
+//
+//    BillEditorSheet(bill: existing)
+//      → Edit an existing bill. Save updates the record.
+//
+//    BillEditorSheet(billDraft: draft, initialImage: data)
+//      → Add a new bill pre-filled from a scanned bill/invoice.
+//
+//  Recurrence remains monthly-only on the form (matching v1's intent).
+//  When a BillDraft arrives with quarterly or annually, the user is
+//  warned in a footer and can adjust the dueDay manually for the
+//  current month — quarterly/annual cadence is set up by adding a
+//  bill once each cycle. A flexible recurrence picker is a follow-on.
 //
 
 import SwiftUI
@@ -22,6 +31,7 @@ struct BillEditorSheet: View {
 
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
+    @Environment(MonthScope.self) private var monthScope
 
     @Query(sort: \Account.sortOrder) private var allAccounts: [Account]
 
@@ -31,20 +41,41 @@ struct BillEditorSheet: View {
     @State private var category: TransactionCategory?
     @State private var sourceAccount: Account?
 
+    @State private var draftRecurrence: BillDraft.Recurrence?
+
     @State private var showingCategoryPicker = false
     @State private var showingAccountPicker = false
     @State private var showDeleteConfirmation = false
 
     @FocusState private var nameFocused: Bool
 
-    init(bill: Transaction? = nil) {
+    // MARK: - Init
+
+    init(
+        bill: Transaction? = nil,
+        billDraft: BillDraft? = nil,
+        initialImage _: Data? = nil
+    ) {
         self.bill = bill
+
         if let bill {
             _amount = State(initialValue: bill.amount)
             _name = State(initialValue: bill.name)
             _dueDay = State(initialValue: bill.dueDay)
             _category = State(initialValue: bill.category)
             _sourceAccount = State(initialValue: bill.sourceAccount)
+        } else if let billDraft {
+            if let draftAmount = billDraft.amount {
+                _amount = State(initialValue: draftAmount)
+            }
+            if let vendor = billDraft.vendor {
+                _name = State(initialValue: vendor)
+            }
+            if let day = billDraft.dueDay, (1...31).contains(day) {
+                _dueDay = State(initialValue: min(day, 28))
+            }
+            _category = State(initialValue: billDraft.category)
+            _draftRecurrence = State(initialValue: billDraft.recurrence)
         }
     }
 
@@ -62,6 +93,9 @@ struct BillEditorSheet: View {
                 amountSection
                 nameSection
                 dueDaySection
+                if let recurrence = draftRecurrence, recurrence != .monthly {
+                    recurrenceWarningSection(recurrence)
+                }
                 categorySection
                 if !allAccounts.isEmpty {
                     accountSection
@@ -70,7 +104,7 @@ struct BillEditorSheet: View {
                     deleteSection
                 }
             }
-            .navigationTitle(isEditing ? "Edit Bill" : "Add Bill")
+            .navigationTitle(isEditing ? "Edit bill" : "Add bill")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { toolbar }
             .sheet(isPresented: $showingCategoryPicker) {
@@ -97,7 +131,9 @@ struct BillEditorSheet: View {
                 if !isEditing && sourceAccount == nil {
                     sourceAccount = AccountDerivations.defaultSpendingSource(allAccounts)
                 }
-                if !isEditing { nameFocused = true }
+                if !isEditing && draftRecurrence == nil {
+                    nameFocused = true
+                }
             }
         }
     }
@@ -133,6 +169,20 @@ struct BillEditorSheet: View {
         } footer: {
             Text("Bills repeat monthly on this day.")
                 .font(Typography.Support.caption)
+        }
+    }
+
+    private func recurrenceWarningSection(_ recurrence: BillDraft.Recurrence) -> some View {
+        Section {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "info.circle")
+                    .foregroundStyle(Theme.amber)
+                    .symbolRenderingMode(.hierarchical)
+                Text("This looks like a \(recurrence.displayName.lowercased()) bill. Plenty saves it as monthly for now — you'll add it again each cycle until \(recurrence == .quarterly ? "quarterly" : "annual") cadence is built in.")
+                    .font(Typography.Support.footnote)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
@@ -216,8 +266,6 @@ struct BillEditorSheet: View {
 
     private func save() {
         let trimmedName = name.trimmingCharacters(in: .whitespaces)
-        let cal = Calendar.current
-        let now = Date.now
 
         if let bill {
             bill.amount = amount
@@ -227,17 +275,18 @@ struct BillEditorSheet: View {
             bill.sourceAccount = sourceAccount
             try? modelContext.save()
         } else {
-            let m = cal.component(.month, from: now)
-            let y = cal.component(.year, from: now)
+            // New bills land in the currently scoped month, not the
+            // calendar month, so users back-filling history (or
+            // pre-planning) get correct placement.
             let new = Transaction.bill(
                 name: trimmedName,
                 amount: amount,
                 dueDay: dueDay,
-                month: m,
-                year: y,
+                month: monthScope.month,
+                year: monthScope.year,
                 category: category,
                 sourceAccount: sourceAccount,
-                recurringRule: .monthly(onDay: dueDay, startingFrom: now)
+                recurringRule: .monthly(onDay: dueDay, startingFrom: .now)
             )
             modelContext.insert(new)
             try? modelContext.save()
