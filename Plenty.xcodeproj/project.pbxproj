@@ -172,8 +172,8 @@
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
 				3BE704952F9EC48E006023F6 /* Exceptions for "Plenty" folder in "Plenty" target */,
-				3BE704F02F9EC500006023F6 /* Exceptions for "Plenty" folder in "PlentyWatch Watch App" target */,
 				3BE704F12F9EC500006023F6 /* Exceptions for "Plenty" folder in "PlentyWidgetExtension" target */,
+				3BE704F02F9EC500006023F6 /* Exceptions for "Plenty" folder in "PlentyWatch Watch App" target */,
 			);
 			path = Plenty;
 			sourceTree = "<group>";
