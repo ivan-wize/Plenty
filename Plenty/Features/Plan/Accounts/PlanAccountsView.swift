@@ -39,8 +39,8 @@ struct PlanAccountsView: View {
         AccountDerivations.activeAccounts(allAccounts)
     }
 
-    private var groupedAccounts: [(kind: AccountKind, accounts: [Account])] {
-        AccountKind.allCases.compactMap { kind in
+    private var groupedAccounts: [(kind: AccountCategory.Kind, accounts: [Account])] {
+        AccountCategory.Kind.allCases.compactMap { kind in
             let group = activeAccounts
                 .filter { $0.kind == kind }
                 .sorted { $0.sortOrder < $1.sortOrder }

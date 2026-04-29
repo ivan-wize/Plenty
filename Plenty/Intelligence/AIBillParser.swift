@@ -49,7 +49,7 @@ enum AIBillParser {
                 to: Prompt {
                     "Extract structured fields from this bill or invoice text:"
                     "\n\n"
-                    trimmed.prefix(4000)
+                    String(trimmed.prefix(4000))
                 },
                 generating: BillExtraction.self
             )
@@ -142,14 +142,16 @@ enum AIBillParser {
     }
 
     private static func mapCategory(_ raw: String) -> TransactionCategory? {
+        // TransactionCategory is the 10-category trim — insurance and taxes
+        // don't have dedicated buckets, so they fall through to .other.
         switch raw.lowercased() {
         case "housing":       return .housing
         case "utilities":     return .utilities
         case "internet":      return .utilities
         case "phone":         return .utilities
         case "subscriptions": return .subscriptions
-        case "insurance":     return .insurance
-        case "taxes":         return .taxes
+        case "insurance":     return .other
+        case "taxes":         return .other
         default:              return nil
         }
     }

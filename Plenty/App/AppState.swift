@@ -33,6 +33,24 @@ final class AppState {
         case income
         case expenses
         case plan
+
+        var title: String {
+            switch self {
+            case .overview: return "Overview"
+            case .income:   return "Income"
+            case .expenses: return "Expenses"
+            case .plan:     return "Plan"
+            }
+        }
+
+        var systemImage: String {
+            switch self {
+            case .overview: return "house"
+            case .income:   return "arrow.down.circle"
+            case .expenses: return "creditcard"
+            case .plan:     return "chart.line.uptrend.xyaxis"
+            }
+        }
     }
 
     var selectedTab: Tab = .overview
@@ -40,6 +58,13 @@ final class AppState {
     // MARK: - Settings sheet
 
     var showingSettingsSheet = false
+
+    // MARK: - Pro
+
+    /// Whether Plenty Pro is unlocked. Owned by StoreKitManager —
+    /// refreshed at launch via `refreshEntitlements()` and updated by the
+    /// transaction listener on purchase, restore, or revocation.
+    var isProUnlocked: Bool = false
 
     // MARK: - Errors
 

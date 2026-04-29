@@ -4,6 +4,13 @@
 //
 //  Target path: Plenty/Engine/BudgetEngine.swift
 //
+//  Build fix: `calendar.endOfMonth(for:)` returns a non-Optional `Date`
+//  (Calendar+Helpers.swift falls back to the input date when its inner
+//  guard fails, so the function never returns nil). The previous
+//  `if let endOfMonth = calendar.endOfMonth(for: reference)` was
+//  binding a non-Optional, which Swift rejects as an invalid
+//  conditional binding. Direct assignment instead.
+//
 //  Phase 1 (v2): produces `monthlyBudgetRemaining` alongside the v1
 //  `spendable` number. Both fields populate the returned snapshot;
 //  Plan-tab features (Outlook, Save, Trends, Net Worth detail) keep
@@ -192,13 +199,14 @@ enum BudgetEngine {
             ) else { continue }
 
             // Compare against next income (or end of month if none).
+            // `endOfMonth(for:)` returns a non-Optional Date with a
+            // sane fallback inside Calendar+Helpers, so direct
+            // assignment is correct here — no `if let` wrapper.
             let cutoff: Date
             if let nextIncomeDate = nextIncomeDate {
                 cutoff = nextIncomeDate
-            } else if let endOfMonth = calendar.endOfMonth(for: reference) {
-                cutoff = endOfMonth
             } else {
-                continue
+                cutoff = calendar.endOfMonth(for: reference)
             }
 
             if dueDate <= cutoff {
@@ -337,4 +345,3 @@ enum BudgetEngine {
         return out
     }
 }
-

@@ -4,6 +4,9 @@
 //
 //  Target path: PlentyWidget/Views/CircularLockScreenView.swift
 //
+//  Phase 8 (v2): caption moves from "spendable" to "left" / "over"
+//  based on sign. Reads `monthlyBudgetRemaining` directly.
+//
 //  Lock screen circular widget. Tiny target — show one number and a
 //  one-word label. Uses AccessoryWidgetBackground for legibility on
 //  arbitrary wallpapers.
@@ -30,7 +33,7 @@ struct CircularLockScreenView: View {
                         .lineLimit(1)
                         .minimumScaleFactor(0.5)
                         .monospacedDigit()
-                    Text("spendable")
+                    Text(captionText)
                         .font(.system(size: 7, weight: .semibold))
                         .foregroundStyle(.secondary)
                 }
@@ -39,7 +42,7 @@ struct CircularLockScreenView: View {
     }
 
     private var formattedAmount: String {
-        let value = NSDecimalNumber(decimal: entry.spendable).doubleValue
+        let value = NSDecimalNumber(decimal: entry.monthlyBudgetRemaining).doubleValue
         let absValue = abs(value)
         let formatted: String
         if absValue >= 1_000_000 {
@@ -50,5 +53,9 @@ struct CircularLockScreenView: View {
             formatted = String(format: "$%.0f", absValue)
         }
         return value < 0 ? "−\(formatted)" : formatted
+    }
+
+    private var captionText: String {
+        entry.isOverBudget ? "over" : "left"
     }
 }

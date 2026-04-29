@@ -4,11 +4,18 @@
 //
 //  Target path: Plenty/App/RootView.swift
 //
-//  Phase 5 (v2): the pending-sheet router now handles the two new
-//  scan-driven cases by passing the captured drafts and image data
-//  into AddExpenseSheet's and BillEditorSheet's new init paths.
+//  Build fix:
+//    • Corrected `SubscriptionRemindersService` → `SubscriptionReminderManager`.
+//      The actual class name is singular and ends in "Manager" — see
+//      Plenty/Notifications/SubscriptionReminderManager.swift. P5's
+//      RootView used the wrong name and it carried through to P10.
+//    • Pass `selectedTab: $state.selectedTab` to LiquidGlassTabBar.
+//      v2's tab bar exposes `@Binding var selectedTab: AppState.Tab`
+//      and was missing its argument here.
 //
-//  Tab content remains the v2 four-tab layout established in P0.
+//  Otherwise unchanged from P10: the pending-sheet router handles the
+//  scan-driven cases, the `.billFromScan` route drops the image arg
+//  since BillEditorSheet doesn't accept one, etc.
 //
 
 import SwiftUI
@@ -27,7 +34,7 @@ struct RootView: View {
     @Environment(AppState.self) private var appState
     @Environment(MonthScope.self) private var monthScope
     @Environment(NotificationManager.self) private var notifications
-    @Environment(SubscriptionRemindersService.self) private var subscriptionReminders
+    @Environment(SubscriptionReminderManager.self) private var subscriptionReminders
     @Environment(StoreKitManager.self) private var storeKit
 
     @State private var readCache = TheReadCache()
@@ -41,7 +48,7 @@ struct RootView: View {
             tabContent
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            LiquidGlassTabBar()
+            LiquidGlassTabBar(selectedTab: $state.selectedTab)
                 .padding(.bottom, 8)
         }
         .background(Theme.background.ignoresSafeArea())
@@ -90,8 +97,12 @@ struct RootView: View {
         case .bill(let existing):
             BillEditorSheet(bill: existing)
 
-        case .billFromScan(let draft, let image):
-            BillEditorSheet(bill: nil, billDraft: draft, initialImage: image)
+        case .billFromScan(let draft, _):
+            // The image arg is intentionally dropped — bills don't have
+            // a model field for it yet. The draft alone is what fills
+            // the form. v2.1 follow-up: wire `Transaction.billImageData`
+            // and re-introduce the image parameter.
+            BillEditorSheet(billDraft: draft)
 
         case .account(let existing):
             AddAccountSheet(account: existing)

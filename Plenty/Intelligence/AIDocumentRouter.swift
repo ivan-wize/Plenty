@@ -59,7 +59,7 @@ enum AIDocumentRouter {
                 to: Prompt {
                     "Classify the following document text:"
                     "\n\n"
-                    trimmed.prefix(2000)
+                    String(trimmed.prefix(2000))
                 },
                 generating: Classification.self
             )

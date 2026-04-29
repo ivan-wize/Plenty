@@ -4,7 +4,15 @@
 //
 //  Target path: Plenty/Features/Expenses/Bills/BillEditorSheet.swift
 //
-//  Phase 5 (v2): three init paths.
+//  Phase 10 cleanup: removed the unused `initialImage: Data? = nil`
+//  init parameter that P5 added for forward compatibility. Bills don't
+//  store image data on the model today (`Transaction.bill` has no
+//  equivalent of `receiptImageData`), so the parameter dropped its
+//  argument silently. The cleanest API doesn't accept what it doesn't
+//  use; if v2.1 wires bill images, the parameter can come back along
+//  with the model field.
+//
+//  Three init paths now:
 //
 //    BillEditorSheet()
 //      → Add a new bill from scratch.
@@ -12,14 +20,14 @@
 //    BillEditorSheet(bill: existing)
 //      → Edit an existing bill. Save updates the record.
 //
-//    BillEditorSheet(billDraft: draft, initialImage: data)
+//    BillEditorSheet(billDraft: draft)
 //      → Add a new bill pre-filled from a scanned bill/invoice.
 //
 //  Recurrence remains monthly-only on the form (matching v1's intent).
 //  When a BillDraft arrives with quarterly or annually, the user is
 //  warned in a footer and can adjust the dueDay manually for the
 //  current month — quarterly/annual cadence is set up by adding a
-//  bill once each cycle. A flexible recurrence picker is a follow-on.
+//  bill once each cycle. A flexible recurrence picker is a v2.1 follow-on.
 //
 
 import SwiftUI
@@ -53,8 +61,7 @@ struct BillEditorSheet: View {
 
     init(
         bill: Transaction? = nil,
-        billDraft: BillDraft? = nil,
-        initialImage _: Data? = nil
+        billDraft: BillDraft? = nil
     ) {
         self.bill = bill
 

@@ -4,6 +4,11 @@
 //
 //  Target path: PlentyWidget/Views/RectangularLockScreenView.swift
 //
+//  Build fix: added a fileprivate `Decimal.asCompactCurrency()` extension
+//  at the bottom of this file. Same reasoning as SmallBudgetWidget —
+//  the widget extension target doesn't link the main app's
+//  Decimal+Currency helper.
+//
 //  Phase 8 (v2): three-line lock-screen widget. Reads
 //  `monthlyBudgetRemaining` for the headline.
 //
@@ -117,5 +122,25 @@ struct RectangularLockScreenView: View {
             return "\(entry.billsRemainingCount) \(plural) \(entry.billsRemaining.asCompactCurrency())"
         }
         return nil
+    }
+}
+
+// MARK: - Decimal Helper
+
+fileprivate extension Decimal {
+    func asCompactCurrency() -> String {
+        let value = NSDecimalNumber(decimal: self).doubleValue
+        let absValue = abs(value)
+        let formatted: String
+        if absValue >= 1_000_000 {
+            formatted = String(format: "$%.1fM", absValue / 1_000_000)
+        } else if absValue >= 10_000 {
+            formatted = String(format: "$%.0fk", absValue / 1_000)
+        } else if absValue >= 1_000 {
+            formatted = String(format: "$%.1fk", absValue / 1_000)
+        } else {
+            formatted = String(format: "$%.0f", absValue)
+        }
+        return value < 0 ? "−\(formatted)" : formatted
     }
 }

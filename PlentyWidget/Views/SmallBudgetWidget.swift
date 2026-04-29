@@ -4,6 +4,13 @@
 //
 //  Target path: PlentyWidget/Views/SmallBudgetWidget.swift
 //
+//  Build fix: added a fileprivate `Decimal.asCompactCurrency()` extension
+//  at the bottom of this file. The widget extension target doesn't
+//  link `Plenty/Utilities/Decimal+Currency.swift` — that file is in the
+//  main app target only. Either add it to the widget target's Compile
+//  Sources, or keep these fileprivate copies. Both work; the latter is
+//  zero-touch on the project file.
+//
 //  Phase 8 (v2): renamed from SmallSpendableWidget. Reads the v2 hero
 //  number (`monthlyBudgetRemaining`). Color and caption switch on
 //  sign:
@@ -154,5 +161,29 @@ struct SmallBudgetWidget: View {
         }
 
         return nil
+    }
+}
+
+// MARK: - Decimal Helper
+
+/// Local copy of the compact-currency formatter so this file compiles
+/// inside the widget target without depending on
+/// `Plenty/Utilities/Decimal+Currency.swift`. Output matches the main
+/// app's compact form: $1.5k, $250, $1.2M.
+fileprivate extension Decimal {
+    func asCompactCurrency() -> String {
+        let value = NSDecimalNumber(decimal: self).doubleValue
+        let absValue = abs(value)
+        let formatted: String
+        if absValue >= 1_000_000 {
+            formatted = String(format: "$%.1fM", absValue / 1_000_000)
+        } else if absValue >= 10_000 {
+            formatted = String(format: "$%.0fk", absValue / 1_000)
+        } else if absValue >= 1_000 {
+            formatted = String(format: "$%.1fk", absValue / 1_000)
+        } else {
+            formatted = String(format: "$%.0f", absValue)
+        }
+        return value < 0 ? "−\(formatted)" : formatted
     }
 }

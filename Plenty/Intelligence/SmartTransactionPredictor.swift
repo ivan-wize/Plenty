@@ -4,22 +4,15 @@
 //
 //  Target path: Plenty/Intelligence/SmartTransactionPredictor.swift
 //
-//  Phase 7 (v2): predicts a category and amount for a new expense
-//  based on the user's own history. Local heuristic only — no
-//  Foundation Models call here. The predictor runs synchronously and
-//  returns nil quickly if there's nothing to suggest.
+//  Phase 10 cleanup: removed the dead `_ = median` no-op statement
+//  inside the variance-penalty branch — that line was a leftover from
+//  an earlier draft where `median` wasn't yet returned, and is now
+//  redundant since `median` is part of the SmartPrediction return value.
 //
-//  Design priorities:
-//    • Privacy: history stays on-device. No vendor name leaks anywhere.
-//    • Latency: every keystroke can re-trigger this without lag.
-//    • Restraint: a low-confidence prediction is no prediction. The
-//      caller only surfaces a suggestion when confidence is meaningful.
-//
-//  The matcher is simple substring + case-insensitive comparison.
-//  "Star" matches "Starbucks" and "Star Market" both. The predictor
-//  ranks matches by exact-vendor frequency, not raw count, so a
-//  user's regular Starbucks isn't drowned out by their occasional
-//  Star Market.
+//  Otherwise unchanged from P7: predicts a category and amount for a
+//  new expense based on the user's own history, on-device, with
+//  confidence scaling on match count, category agreement, and amount
+//  variance.
 //
 
 import Foundation
@@ -146,9 +139,9 @@ final class SmartTransactionPredictor {
             }
         }
 
-        // Penalize slightly when median amount has high variance — if
-        // the user's past Starbucks ranges from $4 to $40, we shouldn't
-        // confidently suggest the median. Use coefficient of variation.
+        // Penalize when median amount has high variance — if the user's
+        // past Starbucks ranges from $4 to $40, we shouldn't confidently
+        // suggest the median. Use coefficient of variation.
         if let median, median > 0, amounts.count >= 3 {
             let avg = amounts.reduce(Decimal.zero, +) / Decimal(amounts.count)
             let variance = amounts.reduce(Decimal.zero) { acc, x in
@@ -165,7 +158,6 @@ final class SmartTransactionPredictor {
             if cv > 0.5 {
                 confidence *= max(0.4, 1.0 - cv)
             }
-            _ = median  // silence unused warning when penalty branch doesn't fire
         }
 
         return SmartPrediction(

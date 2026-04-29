@@ -284,15 +284,25 @@ enum TheReadEngine {
         return "You're tracking under your usual pace at \(perDay) a day. The room is there if you want it."
     }
 
-    /// Wraps `BurnRate.monthEndProjection`. Returns nil when the
-    /// projection isn't reliable yet (early in the month, no expense
-    /// data, etc.).
+    /// Projected `monthlyBudgetRemaining` at month-end given current
+    /// burn. Negative = projected shortfall, positive = projected
+    /// surplus. Returns nil when the projection isn't reliable yet
+    /// (early in the month, negligible burn signal, etc.) — same
+    /// guards as `BurnRate.monthEndProjection`.
     private static func monthEndProjectionAmount(snapshot: PlentySnapshot) -> Decimal? {
-        BurnRate.monthEndProjection(
-            monthlyBudgetRemaining: snapshot.monthlyBudgetRemaining,
-            smoothedDailyBurn: snapshot.smoothedDailyBurn,
-            sustainableDailyBurn: snapshot.sustainableDailyBurn
-        )
+        let calendar = Calendar.current
+        let reference = Date.now
+        let dayOfMonth = calendar.component(.day, from: reference)
+        guard dayOfMonth >= 5 else { return nil }
+        guard snapshot.smoothedDailyBurn > 1 else { return nil }
+        guard let monthRange = calendar.range(of: .day, in: .month, for: reference) else {
+            return nil
+        }
+
+        let daysInMonth = monthRange.count
+        let daysRemaining = max(0, daysInMonth - dayOfMonth)
+        let projectedAdditionalSpend = snapshot.smoothedDailyBurn * Decimal(daysRemaining)
+        return snapshot.monthlyBudgetRemaining - projectedAdditionalSpend
     }
 
     // MARK: - Weekly Deterministic Path

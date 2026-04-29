@@ -168,7 +168,7 @@ struct WatchHomeView: View {
 
     private func confirmIncomeCard(for income: Transaction) -> some View {
         NavigationLink {
-            WatchConfirmIncomeView(income: income)
+            WatchConfirmIncomeView(transaction: income)
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: "arrow.down.circle")
@@ -242,5 +242,16 @@ struct WatchHomeView: View {
     private var numberColor: Color {
         if hasNoData { return .secondary }
         return isOverBudget ? Theme.terracotta : Theme.sage
+    }
+}
+
+private extension Decimal {
+    func asCompactCurrency() -> String {
+        let value = NSDecimalNumber(decimal: self).doubleValue
+        let absValue = abs(value)
+        if absValue >= 1_000 {
+            return String(format: "$%.1fk", value / 1_000)
+        }
+        return String(format: "$%.0f", value)
     }
 }
