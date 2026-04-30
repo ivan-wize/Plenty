@@ -4,6 +4,23 @@
 //
 //  Target path: Plenty/Errors/PlentyError.swift
 //
+//  Phase 4.2 (post-launch v1): converted user-facing strings to
+//  `String(localized:)` so they extract into Localizable.xcstrings
+//  on build.
+//
+//  Pattern:
+//
+//    return String(
+//      localized: "Couldn't save",
+//      comment: "PlentyError.saveFailed title shown on the error banner."
+//    )
+//
+//  String interpolation works inside the `localized:` literal — Xcode
+//  preserves the format specifier (e.g. `%@`) and translators see the
+//  literal with placeholder hints.
+//
+//  ----- Earlier history -----
+//
 //  Unified user-facing error type. Most error paths in the app
 //  log-and-continue silently, which is fine for non-blocking issues
 //  (a failed background sync attempt, a one-off AI generation
@@ -47,32 +64,67 @@ enum PlentyError: Error, Identifiable, Equatable, Sendable {
     var title: String {
         switch self {
         case .cloudKitSyncFailed:
-            return "Sync paused"
+            return String(
+                localized: "Sync paused",
+                comment: "PlentyError.cloudKitSyncFailed title shown on the error banner."
+            )
         case .saveFailed:
-            return "Couldn't save"
+            return String(
+                localized: "Couldn't save",
+                comment: "PlentyError.saveFailed title shown on the error banner."
+            )
         case .aiUnavailable:
-            return "Smart features unavailable"
+            return String(
+                localized: "Smart features unavailable",
+                comment: "PlentyError.aiUnavailable title shown on the error banner."
+            )
         case .importFailed:
-            return "Import failed"
+            return String(
+                localized: "Import failed",
+                comment: "PlentyError.importFailed title shown on the error banner."
+            )
         case .calendarAccessDenied:
-            return "Calendar access needed"
+            return String(
+                localized: "Calendar access needed",
+                comment: "PlentyError.calendarAccessDenied title shown on the error banner."
+            )
         case .generic:
-            return "Something went wrong"
+            return String(
+                localized: "Something went wrong",
+                comment: "PlentyError.generic title shown on the error banner."
+            )
         }
     }
 
     var detail: String {
         switch self {
         case .cloudKitSyncFailed(let message):
-            return "Plenty couldn't reach iCloud. Your data is safe on this device. \(message)"
+            // The interpolated `message` is system-provided (e.g. CloudKit
+            // error description). Translators see "%@" with the comment
+            // explaining what fills it.
+            return String(
+                localized: "Plenty couldn't reach iCloud. Your data is safe on this device. \(message)",
+                comment: "PlentyError.cloudKitSyncFailed detail. Trailing %@ is the system error description."
+            )
         case .saveFailed(let message):
-            return "Plenty couldn't write your last change. \(message)"
+            return String(
+                localized: "Plenty couldn't write your last change. \(message)",
+                comment: "PlentyError.saveFailed detail. Trailing %@ is the system error description."
+            )
         case .aiUnavailable:
-            return "Apple Intelligence isn't available right now. Plenty will use simpler text in the meantime."
+            return String(
+                localized: "Apple Intelligence isn't available right now. Plenty will use simpler text in the meantime.",
+                comment: "PlentyError.aiUnavailable detail."
+            )
         case .importFailed(let message):
+            // The message is the user-facing description from the import
+            // pipeline (already localized at its source). Pass through.
             return message
         case .calendarAccessDenied:
-            return "Plenty needs calendar access to schedule cancellation reminders. Enable it in iOS Settings."
+            return String(
+                localized: "Plenty needs calendar access to schedule cancellation reminders. Enable it in iOS Settings.",
+                comment: "PlentyError.calendarAccessDenied detail."
+            )
         case .generic(let message):
             return message
         }

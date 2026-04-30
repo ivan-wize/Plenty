@@ -4,31 +4,41 @@
 //
 //  Target path: Plenty/Features/Overview/HeroNumberView.swift
 //
-//  Phase 3 (v2): reads `snapshot.monthlyBudgetRemaining` instead of
-//  `snapshot.spendable`. Color logic per PDS §4.1:
+//  Phase 1.2 (post-launch v1): three-state color rule. Sage is now
+//  reserved for *positive* monthlyBudgetRemaining. Zero-but-active
+//  renders in `.primary` (charcoal in light, off-white in dark) so
+//  sage carries real meaning when it appears. Negative stays
+//  terracotta.
 //
-//      ≥ 0  →  sage
-//      < 0  →  terracotta
+//      > 0  →  Theme.sage          ("you have margin")
+//      < 0  →  Theme.terracotta    ("you're over")
+//      = 0  →  .primary            (calm, no editorialization)
+//
+//  Why this matters: in the previous two-state rule, $0 rendered in
+//  sage along with $4,000. Sage stopped being a signal of margin and
+//  became a default. This change costs three lines of code and
+//  restores the meaning of the brand color.
+//
+//  ----- Earlier history -----
+//
+//  Phase 3 (v2): reads `snapshot.monthlyBudgetRemaining` instead of
+//  `snapshot.spendable`.
 //
 //  Label adapts to sign:
 //    • Positive → "You have"
 //    • Zero     → "You're at zero this month"
 //    • Negative → "You're over by"
 //
-//  The negative state shows the absolute value (no minus glyph in the
-//  big number) since the label conveys direction. This avoids the
-//  visual noise of a leading "−$" while still making the state
+//  The negative state shows the absolute value (no minus glyph in
+//  the big number) since the label conveys direction. This avoids
+//  the visual noise of a leading "−$" while still making the state
 //  unambiguous.
 //
-//  Removed in v2:
-//    • Zone-based color logic (sage/amber/terracotta four-state)
-//    • Per-day context line ("That's about $45 a day.")
-//    • Empty-state special copy ("Add a paycheck to see your number.")
-//
-//  The per-day context moves to The Read (when it has something
-//  meaningful to say) and to the optional month-end projection line
-//  in P7. The empty state is folded into the new label/messaging
-//  ("You're at zero this month") which reads naturally at $0.
+//  Note on the empty state: HeroNumberView is no longer responsible
+//  for "no data yet" copy. OverviewTab branches at the call site to
+//  OverviewEmptyHero when `BudgetEngine.hasAnySetupData(...)` is
+//  false, so HeroNumberView only ever renders when there's a
+//  meaningful number to show.
 //
 
 import SwiftUI
@@ -96,8 +106,14 @@ struct HeroNumberView: View {
         return value.asPlainCurrency()
     }
 
+    /// Three-state color rule (Phase 1.2). Sage is reserved for
+    /// *positive* margin so its appearance carries meaning. Zero
+    /// renders in `.primary` rather than sage so the brand color
+    /// doesn't become a default.
     private var numberColor: Color {
-        snapshot.monthlyBudgetIsNegative ? Theme.terracotta : Theme.sage
+        if snapshot.monthlyBudgetRemaining > 0 { return Theme.sage }
+        if snapshot.monthlyBudgetRemaining < 0 { return Theme.terracotta }
+        return .primary
     }
 
     private var amountAsDouble: Double {
@@ -132,17 +148,17 @@ private extension Decimal {
 
 // MARK: - Previews
 
-#Preview("Positive — $1,840") {
+#Preview("Positive — $1,840 (sage)") {
     HeroNumberView(snapshot: .v2Preview(monthlyBudgetRemaining: 1840))
         .background(Theme.background)
 }
 
-#Preview("Zero") {
+#Preview("Zero — primary, not sage") {
     HeroNumberView(snapshot: .v2Preview(monthlyBudgetRemaining: 0))
         .background(Theme.background)
 }
 
-#Preview("Negative — −$540") {
+#Preview("Negative — −$540 (terracotta)") {
     HeroNumberView(snapshot: .v2Preview(monthlyBudgetRemaining: -540))
         .background(Theme.background)
 }

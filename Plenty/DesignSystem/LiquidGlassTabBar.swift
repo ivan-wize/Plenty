@@ -4,6 +4,26 @@
 //
 //  Target path: Plenty/DesignSystem/LiquidGlassTabBar.swift
 //
+//  Phase 4.x polish (post-launch v1): two visual fixes so the bar
+//  reads as Liquid Glass against Plenty's cream background.
+//
+//  1. The four tab buttons live inside a `GlassEffectContainer`, so
+//     when the selected indicator's matched geometry animates between
+//     tabs, the underlying glass refraction follows the move rather
+//     than rebuilding at the new position. This is the same pattern
+//     Apple's Activity, Music, and Fitness tab bars use.
+//
+//  2. The selected indicator opacity bumps from 0.22 → 0.32 and gains
+//     a hairline stroke at sage 0.40. On Plenty's cream surface, the
+//     prior 0.22 fill nearly vanished — the selected tab read as
+//     un-selected. The new treatment is visible without being loud.
+//
+//  Outer-bar padding (insetting from screen edges) lives in RootView,
+//  not here — this view stays content-sized so callers can choose how
+//  to mount it.
+//
+//  ----- Earlier history -----
+//
 //  Phase 0 (v2): four equal tab buttons, no center Add button.
 //
 //  v1 had five visual elements: Home / Accounts / [Add] / Plan /
@@ -41,25 +61,30 @@ struct LiquidGlassTabBar: View {
     /// internal padding). Kept as a constant so the bar height remains
     /// predictable across Dynamic Type sizes (the per-button content
     /// gets a fixedSize).
-    private static let buttonContentHeight: CGFloat = 44
+    private static let buttonContentHeight: CGFloat = 52
 
     // MARK: - Body
 
     var body: some View {
-        HStack(spacing: 0) {
-            tabButton(.overview)
-            tabButton(.income)
-            tabButton(.expenses)
-            tabButton(.plan)
+        GlassEffectContainer(spacing: 0) {
+            HStack(spacing: 0) {
+                tabButton(.overview)
+                tabButton(.income)
+                tabButton(.expenses)
+                tabButton(.plan)
+            }
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 6)
         .frame(maxWidth: .infinity)
-        // Crucial: collapse vertical sizing to content. Without this
-        // the bar can stretch to fill the safe-area inset region and
-        // the capsule background grows to dominate the screen.
         .fixedSize(horizontal: false, vertical: true)
-        .modifier(GlassCapsuleBackground())
+        // ONE glass capsule for the entire bar (matches Fitness/Music).
+        // `.interactive()` gives the touch-driven specular response.
+        .glassEffect(.regular.interactive(), in: Capsule())
+        // On light backgrounds glass refraction alone is too subtle —
+        // a layered drop-shadow gives the bar visible lift.
+        .shadow(color: Color.black.opacity(0.18), radius: 18, x: 0, y: 6)
+        .shadow(color: Color.black.opacity(0.08), radius: 1, x: 0, y: 1)
     }
 
     // MARK: - Tab Button
@@ -80,7 +105,11 @@ struct LiquidGlassTabBar: View {
             ZStack {
                 if isSelected {
                     Capsule()
-                        .fill(Theme.sage.opacity(Theme.Opacity.soft))
+                        .fill(Theme.sage.opacity(0.32))
+                        .overlay(
+                            Capsule()
+                                .strokeBorder(Theme.sage.opacity(0.40), lineWidth: 0.5)
+                        )
                         .matchedGeometryEffect(id: "activeTabIndicator", in: indicatorNamespace)
                 }
 
@@ -98,9 +127,6 @@ struct LiquidGlassTabBar: View {
                 .padding(.horizontal, 4)
             }
             .frame(maxWidth: .infinity)
-            // Constrain the per-button frame so the inner Capsule
-            // (the selected-state indicator) doesn't stretch beyond
-            // the button's natural content size.
             .frame(height: Self.buttonContentHeight)
             .contentShape(Capsule())
         }
@@ -108,21 +134,5 @@ struct LiquidGlassTabBar: View {
         .accessibilityLabel(tab.title)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
         .sensoryFeedback(.selection, trigger: isSelected)
-    }
-}
-
-// MARK: - Glass Capsule Background
-
-/// Encapsulates the bar's background treatment so the swap to native
-/// Liquid Glass (when the framework lands a stable API) is one place.
-private struct GlassCapsuleBackground: ViewModifier {
-    func body(content: Content) -> some View {
-        content
-            .background(.ultraThinMaterial, in: Capsule())
-            .overlay(
-                Capsule()
-                    .strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5)
-            )
-            .shadow(color: Color.black.opacity(0.08), radius: 8, x: 0, y: 2)
     }
 }

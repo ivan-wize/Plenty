@@ -4,6 +4,10 @@
 //
 //  Target path: Plenty/Notifications/NotificationScheduler.swift
 //
+//  Phase 2.3 (post-launch v1): the weekly notification title reads
+//  "The Sunday Read" so the public name matches the Settings toggle
+//  and the TheRead.Kind displayName.
+//
 //  Schedules actual notifications based on NotificationManager toggle
 //  state and current SwiftData. Idempotent — clears its own pending
 //  notifications and rebuilds from scratch each call. Safe to run on
@@ -63,7 +67,7 @@ struct NotificationScheduler {
         }
 
         let content = UNMutableNotificationContent()
-        content.title = "Sunday Read"
+        content.title = "The Sunday Read"
         content.body = body
         content.sound = .default
         content.threadIdentifier = "plenty.weekly"

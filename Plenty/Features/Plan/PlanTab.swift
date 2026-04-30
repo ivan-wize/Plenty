@@ -4,6 +4,21 @@
 //
 //  Target path: Plenty/Features/Plan/PlanTab.swift
 //
+//  Phase 2.2 (post-launch v1): the conditional `+` toolbar button
+//  (visible on Accounts mode only) is removed. Adding an account
+//  remains a contextual action surfaced two ways inside
+//  PlanAccountsView itself:
+//
+//    • The empty-state CTA when no accounts exist
+//    • The `plus.circle` icon next to the "Accounts" header
+//
+//  The root-level AddFloatingButton offers the standard menu
+//  (transaction, bill, income, scan) without an "Add account" item
+//  — surfacing it there would compete with the contextual affordance
+//  the user is already looking at.
+//
+//  ----- Earlier history -----
+//
 //  Phase 6 (v2): four-mode Plan tab. Accounts is the new free
 //  default; Outlook, Save, and Trends remain Pro.
 //
@@ -14,11 +29,6 @@
 //       - Outlook  → OutlookView or PlanLockedView(lockedMode: .outlook)
 //       - Save     → SaveView or PlanLockedView(lockedMode: .save)
 //       - Trends   → TrendsView or PlanLockedView(lockedMode: .trends)
-//
-//  Toolbar is contextual: an "Add account" button appears in the
-//  top-trailing slot only when on Accounts mode. Other modes don't
-//  have an add affordance at the tab level — Save has its own +
-//  inside the goals section, etc.
 //
 //  Default mode: .accounts. v1 defaulted to .outlook because Plan
 //  was Pro-only; in v2 the default reflects what a free user can
@@ -47,20 +57,6 @@ struct PlanTab: View {
             .background(Theme.background)
             .navigationTitle("Plan")
             .navigationBarTitleDisplayMode(.large)
-            .toolbar {
-                if mode == .accounts {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button {
-                            appState.pendingAddSheet = .account()
-                        } label: {
-                            Image(systemName: "plus")
-                                .font(.body.weight(.semibold))
-                                .foregroundStyle(Theme.sage)
-                        }
-                        .accessibilityLabel("Add an account")
-                    }
-                }
-            }
         }
     }
 

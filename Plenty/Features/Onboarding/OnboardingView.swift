@@ -4,24 +4,37 @@
 //
 //  Target path: Plenty/Features/Onboarding/OnboardingView.swift
 //
-//  Phase 9 (v2): four-page onboarding aligned with v2's hero formula.
+//  Phase 1.3 (post-launch v1): five-page onboarding. Adds an
+//  optional seed-data page between Privacy and the Start Fresh /
+//  Demo picker so a user who provides two numbers lands on Overview
+//  with a real hero number on day one.
 //
 //    1. Welcome  — Plenty in one sentence (v2 voice)
 //    2. Formula  — what the hero number actually is, with the
-//                  + income / − bills / − expenses breakdown. NEW in v2.
+//                  + income / − bills / − expenses breakdown.
 //    3. Privacy  — what stays on device, what leaves
-//    4. Picker   — Start fresh / Start with demo data
+//    4. Seed     — two optional inputs: monthly take-home + largest
+//                  monthly bill. NEW post-launch v1.
+//    5. Picker   — Start fresh / Start with demo data
 //
-//  Wiring: PlentyApp checks `OnboardingView.shouldShow` at launch and
-//  presents this as a fullScreenCover when true. Tapping either choice
-//  marks onboarding complete and dismisses.
+//  The seed page is shown to everyone, but its values only apply on
+//  "Start fresh." Tapping "Start with demo data" silently ignores
+//  the inputs — the user's clear intent is to explore, not to
+//  set up their own finances.
 //
-//  v2 voice rules apply throughout: second person, possession-leading,
-//  no exclamations, no marketing flourish.
+//  Wiring: PlentyApp checks `OnboardingView.shouldShow` at launch
+//  and presents this as a fullScreenCover when true. Tapping either
+//  picker choice marks onboarding complete and dismisses.
+//
+//  v2 voice rules apply throughout: second person, possession-
+//  leading, no exclamations, no marketing flourish.
 //
 
 import SwiftUI
 import SwiftData
+import os
+
+private let logger = Logger(subsystem: "com.plenty.app", category: "onboarding")
 
 struct OnboardingView: View {
 
@@ -46,7 +59,13 @@ struct OnboardingView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var page: Int = 0
-    private let lastPage = 3
+    private let lastPage = 4
+
+    // Seed-page inputs. All optional; zeros and empty strings mean
+    // "user skipped this part."
+    @State private var monthlyTakehome: Decimal = 0
+    @State private var largestBillName: String = ""
+    @State private var largestBillAmount: Decimal = 0
 
     // MARK: - Body
 
@@ -56,7 +75,8 @@ struct OnboardingView: View {
                 welcomePage.tag(0)
                 formulaPage.tag(1)
                 privacyPage.tag(2)
-                pickerPage.tag(3)
+                seedPage.tag(3)
+                pickerPage.tag(4)
             }
             .tabViewStyle(.page(indexDisplayMode: .always))
             .indexViewStyle(.page(backgroundDisplayMode: .always))
@@ -105,7 +125,7 @@ struct OnboardingView: View {
         .padding(.horizontal, 24)
     }
 
-    // MARK: - Formula (NEW in v2)
+    // MARK: - Formula
 
     private var formulaPage: some View {
         VStack(spacing: 28) {
@@ -237,6 +257,103 @@ struct OnboardingView: View {
         }
     }
 
+    // MARK: - Seed (NEW post-launch v1)
+
+    private var seedPage: some View {
+        ScrollView {
+            VStack(spacing: 24) {
+                Color.clear.frame(height: 16)
+
+                Image(systemName: "pencil.tip")
+                    .font(.system(size: 48, weight: .light))
+                    .foregroundStyle(Theme.sage)
+                    .symbolRenderingMode(.hierarchical)
+
+                VStack(spacing: 12) {
+                    Text("A head start, if you'd like")
+                        .font(Typography.Title.medium)
+                        .foregroundStyle(.primary)
+                        .multilineTextAlignment(.center)
+
+                    Text("Both optional. They give Plenty enough to show a real total on day one.")
+                        .font(Typography.Body.regular)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 32)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                VStack(spacing: 12) {
+                    takehomeCard
+                    largestBillCard
+                }
+                .padding(.horizontal, 24)
+
+                Color.clear.frame(height: 24)
+            }
+        }
+        .scrollDismissesKeyboard(.interactively)
+    }
+
+    private var takehomeCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Monthly take-home")
+                    .font(Typography.Body.emphasis)
+                    .foregroundStyle(.primary)
+                Text("After taxes — what typically lands in your account.")
+                    .font(Typography.Support.footnote)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            HStack(spacing: 4) {
+                Text("$")
+                    .font(.system(size: 28, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.secondary)
+                CurrencyField(value: $monthlyTakehome, prompt: "0", accent: Theme.sage)
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
+                .fill(Theme.cardSurface)
+        )
+    }
+
+    private var largestBillCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Largest monthly bill")
+                    .font(Typography.Body.emphasis)
+                    .foregroundStyle(.primary)
+                Text("Rent, mortgage, daycare — whatever weighs on your month most.")
+                    .font(Typography.Support.footnote)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            TextField("Bill name", text: $largestBillName, prompt: Text("Rent, mortgage…").foregroundStyle(.tertiary))
+                .textFieldStyle(.plain)
+                .font(Typography.Body.regular)
+                .submitLabel(.done)
+
+            HStack(spacing: 4) {
+                Text("$")
+                    .font(.system(size: 28, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.secondary)
+                CurrencyField(value: $largestBillAmount, prompt: "0", accent: Theme.sage)
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
+                .fill(Theme.cardSurface)
+        )
+    }
+
     // MARK: - Picker
 
     private var pickerPage: some View {
@@ -347,6 +464,7 @@ struct OnboardingView: View {
     // MARK: - Actions
 
     private func startFresh() {
+        applySeedIfPresent()
         Self.markCompleted()
         dismiss()
     }
@@ -360,6 +478,64 @@ struct OnboardingView: View {
         DemoModeService.seed(modelContext: modelContext)
         Self.markCompleted()
         dismiss()
+    }
+
+    // MARK: - Seed Application
+
+    /// Translate the optional seed-page inputs into model records.
+    /// Runs only on Start Fresh; the demo path ignores them.
+    ///
+    /// • Take-home → IncomeSource (monthly cadence, today's
+    ///   day-of-month clamped to 28, rolloverEnabled = true).
+    /// • Bill      → recurring Transaction(.bill) for the current
+    ///   month/year, due on today's day-of-month (also clamped to
+    ///   28 to stay safe in February).
+    ///
+    /// Both values default to zero and "" — empty inputs short-circuit
+    /// without touching the context.
+    private func applySeedIfPresent() {
+        guard monthlyTakehome > 0 || largestBillAmount > 0 else { return }
+
+        let cal = Calendar.current
+        let now = Date.now
+        let m = cal.component(.month, from: now)
+        let y = cal.component(.year, from: now)
+
+        // Clamp to 28 so monthly cadence is guaranteed to fire every
+        // month, including February. The user can edit the day later.
+        let day = min(cal.component(.day, from: now), 28)
+
+        if monthlyTakehome > 0 {
+            let source = IncomeSource(
+                name: "Paycheck",
+                expectedAmount: monthlyTakehome,
+                frequency: .monthly,
+                dayOfMonth: day,
+                isActive: true,
+                rolloverEnabled: true
+            )
+            modelContext.insert(source)
+        }
+
+        if largestBillAmount > 0 {
+            let trimmed = largestBillName.trimmingCharacters(in: .whitespacesAndNewlines)
+            let billName = trimmed.isEmpty ? "Rent" : trimmed
+            let bill = Transaction.bill(
+                name: billName,
+                amount: largestBillAmount,
+                dueDay: day,
+                month: m,
+                year: y
+                // recurringRule: nil → factory creates .monthly rule
+            )
+            modelContext.insert(bill)
+        }
+
+        do {
+            try modelContext.save()
+        } catch {
+            logger.error("Seed save failed: \(error.localizedDescription)")
+        }
     }
 }
 

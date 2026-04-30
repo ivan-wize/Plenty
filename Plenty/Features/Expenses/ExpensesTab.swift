@@ -4,13 +4,30 @@
 //
 //  Target path: Plenty/Features/Expenses/ExpensesTab.swift
 //
+//  Phase 2.2 (post-launch v1): the trailing `+` toolbar button is
+//  removed. The root-level AddFloatingButton handles adds with
+//  "Add transaction" leading the menu when this tab is active.
+//
+//  Note: the FAB doesn't see the sub-tab (Transactions vs Bills).
+//  Lead is always `transaction`. When the user is on Bills sub-tab
+//  and wants to add a bill, they tap the FAB and choose "Add bill"
+//  (the second item). Surfacing sub-tab state through AppState would
+//  let the FAB adapt further; deferred until there's evidence users
+//  actually want it.
+//
+//  The leading scanner button stays — it's a complementary entry
+//  point that the FAB also offers, but co-locating it with the
+//  Expenses chrome makes the receipt → expense flow especially
+//  fast (one tap from the tab to the camera).
+//
+//  ----- Earlier history -----
+//
 //  Phase 5 (v2): the full Expenses tab.
 //
 //  Layout, top to bottom:
 //    1. NavigationStack with toolbar:
 //       - top-leading: scan document button (auto-routing)
-//       - top-trailing: + → contextual add (transaction or bill,
-//         depending on the selected sub-tab)
+//       - (trailing + removed in Phase 2.2)
 //    2. MonthNavigator
 //    3. ExpensesSegmentedControl (Transactions | Bills)
 //    4. The selected sub-tab's content view
@@ -59,22 +76,6 @@ struct ExpensesTab: View {
                     }
                     .accessibilityLabel("Scan document")
                 }
-
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        switch subTab {
-                        case .transactions:
-                            appState.pendingAddSheet = .expense
-                        case .bills:
-                            appState.pendingAddSheet = .bill()
-                        }
-                    } label: {
-                        Image(systemName: "plus")
-                            .font(.body.weight(.semibold))
-                            .foregroundStyle(Theme.sage)
-                    }
-                    .accessibilityLabel(addButtonLabel)
-                }
             }
             .sheet(isPresented: $showingScanner) {
                 DocumentScannerView(mode: .auto) { result in
@@ -92,13 +93,6 @@ struct ExpensesTab: View {
             TransactionsListView()
         case .bills:
             BillsListView()
-        }
-    }
-
-    private var addButtonLabel: String {
-        switch subTab {
-        case .transactions: return "Add transaction"
-        case .bills:        return "Add bill"
         }
     }
 

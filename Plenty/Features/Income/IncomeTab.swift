@@ -4,23 +4,17 @@
 //
 //  Target path: Plenty/Features/Income/IncomeTab.swift
 //
+//  Phase 2.2 (post-launch v1): the trailing `+` toolbar button is
+//  removed. The root-level AddFloatingButton handles "Add income"
+//  with that action leading the menu when this tab is active.
+//
+//  The empty-state CTAs ("Add recurring income", "Copy from <month>")
+//  remain — they're contextual and useful when the user is staring
+//  at an empty month.
+//
+//  ----- Earlier history -----
+//
 //  Phase 4 (v2): the full Income tab.
-//
-//  Layout, top to bottom:
-//    1. NavigationStack with `+` toolbar button → AddIncomeSheet
-//    2. MonthNavigator — scopes the page to a calendar month
-//    3. IncomeMonthSummaryCard — Confirmed / Expected totals
-//    4. IncomeListView — Confirmed and Expected sections
-//       (or empty-state CTA when nothing for the month)
-//    5. "Copy from previous month" button at the bottom of the list
-//
-//  Data flow:
-//    • SwiftData @Query fetches all income transactions
-//    • Filter to monthScope's month/year
-//    • Split into confirmed / expected groups
-//    • CopyFromPreviousMonthSheet pulls from the immediately prior
-//      month and materializes selected items as Expected income with
-//      `copiedFromID` set on each new Transaction
 //
 
 import SwiftUI
@@ -119,18 +113,6 @@ struct IncomeTab: View {
             .background(Theme.background)
             .navigationTitle("Income")
             .navigationBarTitleDisplayMode(.large)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        appState.pendingAddSheet = .income(preferRecurring: false)
-                    } label: {
-                        Image(systemName: "plus")
-                            .font(.body.weight(.semibold))
-                            .foregroundStyle(Theme.sage)
-                    }
-                    .accessibilityLabel("Add income")
-                }
-            }
             .sheet(isPresented: $showingCopySheet) {
                 copySheet
             }

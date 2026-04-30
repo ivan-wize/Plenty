@@ -4,6 +4,31 @@
 //
 //  Target path: Plenty/App/RootView.swift
 //
+//  Phase 2.2 (post-launch v1): the AddFloatingButton lives here as
+//  a tab-content overlay rather than per-tab. Single source of truth
+//  for the primary add affordance. Tabs no longer carry their own
+//  `+` toolbar items.
+//
+//  Layout layering (bottom-up):
+//    1. Theme.background
+//    2. tabContent (the active tab's view)
+//       └── overlay(.bottomTrailing) — AddFloatingButton(tab:)
+//    3. LiquidGlassTabBar
+//
+//  The FAB is an overlay on tabContent (not a sibling of the tab
+//  bar) so the tab bar always draws on top — preserving the previous
+//  visual stacking where the FAB sat slightly behind the tab bar's
+//  glass surface.
+//
+//  Sheets presented from RootView (settings, pending add) cover both
+//  the FAB and the tab bar naturally, since SwiftUI sheets render
+//  above all sibling content.
+//
+//  Everything below the body — startup tasks, sheet router,
+//  notification scheduling — is unchanged from the prior RootView.
+//
+//  ----- Earlier history -----
+//
 //  Build fix:
 //    • Corrected `SubscriptionRemindersService` → `SubscriptionReminderManager`.
 //      The actual class name is singular and ends in "Manager" — see
@@ -12,10 +37,6 @@
 //    • Pass `selectedTab: $state.selectedTab` to LiquidGlassTabBar.
 //      v2's tab bar exposes `@Binding var selectedTab: AppState.Tab`
 //      and was missing its argument here.
-//
-//  Otherwise unchanged from P10: the pending-sheet router handles the
-//  scan-driven cases, the `.billFromScan` route drops the image arg
-//  since BillEditorSheet doesn't accept one, etc.
 //
 
 import SwiftUI
@@ -47,8 +68,14 @@ struct RootView: View {
         ZStack(alignment: .bottom) {
             tabContent
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .overlay(alignment: .bottomTrailing) {
+                    AddFloatingButton(tab: appState.selectedTab)
+                        .padding(.trailing, 20)
+                        .padding(.bottom, 84)  // clears the floating tab bar
+                }
 
             LiquidGlassTabBar(selectedTab: $state.selectedTab)
+                .padding(.horizontal, 16)
                 .padding(.bottom, 8)
         }
         .background(Theme.background.ignoresSafeArea())

@@ -4,6 +4,11 @@
 //
 //  Target path: PlentyWidget/Views/RectangularLockScreenView.swift
 //
+//  Phase 4.2 (post-launch v1): replaces the manual ternary plural for
+//  "1 bill" / "N bills" with Automatic Grammar Agreement via
+//  String(localized:) and the ^[…](inflect: true) syntax. iOS
+//  pluralizes correctly per locale at runtime.
+//
 //  Build fix: added a fileprivate `Decimal.asCompactCurrency()` extension
 //  at the bottom of this file. Same reasoning as SmallBudgetWidget —
 //  the widget extension target doesn't link the main app's
@@ -118,8 +123,15 @@ struct RectangularLockScreenView: View {
             return "~\(burn.asCompactCurrency())/day"
         }
         if entry.billsRemainingCount > 0 {
-            let plural = entry.billsRemainingCount == 1 ? "bill" : "bills"
-            return "\(entry.billsRemainingCount) \(plural) \(entry.billsRemaining.asCompactCurrency())"
+            // Phase 4.2: use Automatic Grammar Agreement so "1 bill"
+            // vs "2 bills" inflects correctly in every supported locale
+            // without manual ternary plural logic. Xcode extracts the
+            // ^[…](inflect: true) form into Localizable.xcstrings on
+            // build and offers translators a plural variations editor.
+            return String(
+                localized: "^[\(entry.billsRemainingCount) bill](inflect: true) \(entry.billsRemaining.asCompactCurrency())",
+                comment: "Lock-screen rectangular subline: count of unpaid bills + total amount remaining."
+            )
         }
         return nil
     }

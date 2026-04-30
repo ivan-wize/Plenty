@@ -45,9 +45,9 @@ final class AppState {
 
         var systemImage: String {
             switch self {
-            case .overview: return "house"
+            case .overview: return "chart.pie"
             case .income:   return "arrow.down.circle"
-            case .expenses: return "creditcard"
+            case .expenses: return "arrow.up.circle"
             case .plan:     return "chart.line.uptrend.xyaxis"
             }
         }

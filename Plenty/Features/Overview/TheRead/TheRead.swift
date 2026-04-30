@@ -6,8 +6,11 @@
 //
 //  Phase 4: six kinds (silence, paceWarning, paceTrend, billReminder,
 //           incomeReminder, milestone). One sentence each.
-//  Phase 7: + .weekly case for the Sunday Read. Body is up to 3 sentences,
+//  Phase 7: + .weekly case for The Sunday Read. Body is up to 3 sentences,
 //           sent as a notification body Sunday mornings.
+//  Phase 2.3 (post-launch v1): public name reconciled to "The Sunday
+//           Read" across Settings, the notification title, and this
+//           displayName so the weekly variant has one consistent name.
 //
 //  Pure value type. Generation lives in TheReadEngine. Display lives
 //  in TheReadView (daily kinds). Notification delivery lives in
@@ -29,7 +32,7 @@ struct TheRead: Equatable, Sendable {
         case milestone
 
         // Phase 7
-        /// "Sunday Read" — weekly digest delivered as a notification.
+        /// "The Sunday Read" — weekly digest delivered as a notification.
         /// Body is 1-3 sentences. Generated weekly, not daily.
         case weekly
 
@@ -41,7 +44,7 @@ struct TheRead: Equatable, Sendable {
             case .billReminder:   return "Bill Reminder"
             case .incomeReminder: return "Income Reminder"
             case .milestone:      return "Milestone"
-            case .weekly:         return "Sunday Read"
+            case .weekly:         return "The Sunday Read"
             }
         }
 

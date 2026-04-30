@@ -4,27 +4,44 @@
 //
 //  Target path: Plenty/Features/Overview/OverviewTab.swift
 //
+//  Phase 2.1 (post-launch v1): the navigation title is cleared.
+//  MonthNavigator owns the month label below the nav bar; the nav
+//  bar shows only the info button and the settings button. Resolves
+//  the duplicated "April 2026" between the inline title and the
+//  MonthNavigator.
+//
+//  Phase 2.2 (post-launch v1): AddFloatingButton no longer lives in
+//  this view's ZStack — it's an overlay on RootView. The bottom-
+//  trailing ZStack alignment, the FAB padding, and the surrounding
+//  ZStack are removed. Just the ScrollView remains.
+//
+//  Phase 2.4 (post-launch v1): the snapshot is cached in `@State`
+//  and refreshed via `.task(id:)` keyed on a hash of inputs that
+//  meaningfully affect BudgetEngine.calculate. This avoids
+//  recomputing the snapshot on every body re-render — pure
+//  state-driven re-renders (e.g., toggling showingExplainer) now
+//  reuse the cached value.
+//
+//  Cache invalidation captures: month, year, transaction count +
+//  max updatedAt, account count + balance sum, goal count. Edits to
+//  account fields beyond `balance` (e.g., statementBalance) don't
+//  invalidate; in practice those edits are rare and the next month
+//  navigation refreshes everything. If TestFlight surfaces a
+//  staleness symptom, expand SnapshotKey to hash more account
+//  fields.
+//
+//  Phase 3.2 (post-launch v1): hosts the share-this-month sheet.
+//  OverviewTopBar's ellipsis menu writes `showingShareSheet`; this
+//  view presents `MonthlySharePreviewSheet` with the active month
+//  label and the cached snapshot.
+//
+//  ----- Earlier history -----
+//
+//  Phase 1.1 (post-launch v1): branches between the populated hero
+//  block and OverviewEmptyHero based on
+//  `BudgetEngine.hasAnySetupData(...)`.
+//
 //  Phase 3 (v2): the full Overview tab.
-//
-//  Layout, top to bottom:
-//    1. NavigationStack toolbar — info button (left), settings (right)
-//    2. ErrorBanner (when AppState has a lastError)
-//    3. DemoModeBanner (when demo mode active)
-//    4. MonthNavigator
-//    5. HeroNumberView — reads `monthlyBudgetRemaining`
-//    6. ProjectionLineView — "+ $X expected this month"
-//    7. TheReadView — daily AI insight
-//    8. OverviewTransactionsSection — last 3 transactions for the month
-//    9. OverviewBillsSection — next 3 unpaid bills for the month
-//   10. AddFloatingButton — bottom-right, overlays the scroll view
-//
-//  Data flow:
-//    • SwiftData @Queries fetch all accounts / transactions / goals.
-//    • BudgetEngine.calculate() runs against the env-injected
-//      MonthScope's month + year, so changing the month triggers a
-//      full re-render with the new snapshot.
-//    • TheReadCache is per-tab @State; it auto-refreshes when the
-//      month or hero number changes.
 //
 
 import SwiftUI
@@ -45,22 +62,30 @@ struct OverviewTab: View {
 
     @Query(sort: \Account.sortOrder) private var allAccounts: [Account]
     @Query private var allTransactions: [Transaction]
+    @Query private var allIncomeSources: [IncomeSource]
     @Query private var allSavingsGoals: [SavingsGoal]
 
     // MARK: - Local State
 
     @State private var readCache = TheReadCache()
     @State private var showingExplainer = false
+    @State private var showingShareSheet = false
+
+    /// Cached snapshot. Refreshed via `.task(id: snapshotKey)` so the
+    /// expensive BudgetEngine.calculate path runs once per
+    /// meaningful-input change, not once per body render.
+    @State private var cachedSnapshot: PlentySnapshot = .empty
 
     // MARK: - Derived
 
-    private var snapshot: PlentySnapshot {
-        BudgetEngine.calculate(
-            accounts: AccountDerivations.activeAccounts(allAccounts),
+    /// Drives the empty-state branch. True the moment any account,
+    /// transaction, income source, or savings goal exists.
+    private var hasAnySetupData: Bool {
+        BudgetEngine.hasAnySetupData(
+            accounts: allAccounts,
             transactions: allTransactions,
-            savingsGoals: allSavingsGoals,
-            month: monthScope.month,
-            year: monthScope.year
+            incomeSources: allIncomeSources,
+            savingsGoals: allSavingsGoals
         )
     }
 
@@ -99,70 +124,135 @@ struct OverviewTab: View {
         @Bindable var state = appState
 
         NavigationStack {
-            ZStack(alignment: .bottomTrailing) {
-                ScrollView {
-                    VStack(spacing: 24) {
-                        ErrorBanner(error: $state.lastError)
+            ScrollView {
+                VStack(spacing: 24) {
+                    ErrorBanner(error: $state.lastError)
 
-                        DemoModeBanner()
+                    DemoModeBanner()
 
-                        MonthNavigator()
-                            .padding(.horizontal, 8)
+                    MonthNavigator()
+                        .padding(.horizontal, 8)
 
-                        VStack(spacing: 6) {
-                            HeroNumberView(snapshot: snapshot)
-                                .currencyDynamicTypeCap()
-
-                            ProjectionLineView(snapshot: snapshot)
-                                .animation(.snappy, value: snapshot.expectedIncomeRemaining)
-                        }
-
-                        if let read = readCache.current, read.shouldDisplay {
-                            TheReadView(read: read, isLoading: readCache.isGenerating)
-                                .padding(.horizontal, 16)
-                        }
-
-                        OverviewTransactionsSection(transactions: recentTransactions)
-                            .padding(.horizontal, 16)
-
-                        OverviewBillsSection(bills: upcomingBills)
-                            .padding(.horizontal, 16)
-
-                        // Bottom padding to clear the floating tab bar
-                        // and the FAB.
-                        Color.clear.frame(height: 100)
+                    if hasAnySetupData {
+                        populatedContent
+                    } else {
+                        OverviewEmptyHero()
                     }
-                    .padding(.top, 4)
-                }
-                .scrollDismissesKeyboard(.interactively)
-                .background(Theme.background)
 
-                AddFloatingButton()
-                    .padding(.trailing, 20)
-                    .padding(.bottom, 84)  // clears the floating tab bar
+                    // Bottom padding to clear the floating tab bar
+                    // and the FAB (now hosted by RootView).
+                    Color.clear.frame(height: 100)
+                }
+                .padding(.top, 4)
+                .animation(.snappy, value: hasAnySetupData)
             }
-            .navigationTitle(monthScope.displayLabel)
+            .scrollDismissesKeyboard(.interactively)
+            .background(Theme.background)
+            // Phase 2.1: nav title cleared. MonthNavigator below owns
+            // the month label; the nav bar carries only the info and
+            // settings buttons.
+            .navigationTitle("")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                OverviewTopBar(showingExplainer: $showingExplainer)
+                OverviewTopBar(
+                    showingExplainer: $showingExplainer,
+                    showingShareSheet: $showingShareSheet,
+                    canShare: hasAnySetupData
+                )
             }
             .sheet(isPresented: $showingExplainer) {
                 AppExplainerSheet()
             }
+            .sheet(isPresented: $showingShareSheet) {
+                MonthlySharePreviewSheet(
+                    monthLabel: monthScope.displayLabel,
+                    snapshot: cachedSnapshot
+                )
+            }
+            // Phase 2.4: refresh the cached snapshot whenever the
+            // inputs that meaningfully affect it change. `.task(id:)`
+            // runs on first appear with the initial id and on every
+            // id change thereafter.
+            .task(id: snapshotKey) {
+                cachedSnapshot = computeSnapshot()
+            }
             // Refresh The Read when the scoped month changes.
             .task(id: scopeKey) {
-                await readCache.ensureFresh(snapshot: snapshot)
+                guard hasAnySetupData else { return }
+                await readCache.ensureFresh(snapshot: cachedSnapshot)
             }
-            .onChange(of: snapshot.monthlyBudgetRemaining) { oldValue, newValue in
+            .onChange(of: cachedSnapshot.monthlyBudgetRemaining) { oldValue, newValue in
                 // Invalidate The Read when the hero crosses a meaningful
                 // boundary (sign change, or > $50 delta).
+                guard hasAnySetupData else { return }
                 let crossedZero = (oldValue >= 0) != (newValue >= 0)
                 let bigSwing = abs(NSDecimalNumber(decimal: oldValue - newValue).doubleValue) > 50
                 if crossedZero || bigSwing {
-                    Task { await readCache.regenerate(snapshot: snapshot) }
+                    Task { await readCache.regenerate(snapshot: cachedSnapshot) }
                 }
             }
         }
+    }
+
+    // MARK: - Populated Content
+
+    @ViewBuilder
+    private var populatedContent: some View {
+        VStack(spacing: 6) {
+            HeroNumberView(snapshot: cachedSnapshot)
+                .currencyDynamicTypeCap()
+
+            ProjectionLineView(snapshot: cachedSnapshot)
+                .animation(.snappy, value: cachedSnapshot.expectedIncomeRemaining)
+        }
+
+        if let read = readCache.current, read.shouldDisplay {
+            TheReadView(read: read, isLoading: readCache.isGenerating)
+                .padding(.horizontal, 16)
+        }
+
+        OverviewTransactionsSection(transactions: recentTransactions)
+            .padding(.horizontal, 16)
+
+        OverviewBillsSection(bills: upcomingBills)
+            .padding(.horizontal, 16)
+    }
+
+    // MARK: - Snapshot Caching
+
+    private func computeSnapshot() -> PlentySnapshot {
+        BudgetEngine.calculate(
+            accounts: AccountDerivations.activeAccounts(allAccounts),
+            transactions: allTransactions,
+            savingsGoals: allSavingsGoals,
+            month: monthScope.month,
+            year: monthScope.year
+        )
+    }
+
+    /// Hashable signature of the inputs to BudgetEngine.calculate.
+    /// Recomputed every body render (cheap — linear over arrays) and
+    /// drives `.task(id:)` to refresh the cache only on real change.
+    private var snapshotKey: SnapshotKey {
+        SnapshotKey(
+            month: monthScope.month,
+            year: monthScope.year,
+            txCount: allTransactions.count,
+            txMaxUpdated: allTransactions.map(\.updatedAt).max() ?? .distantPast,
+            acctCount: allAccounts.count,
+            acctBalanceSum: allAccounts.reduce(Decimal.zero) { $0 + $1.balance },
+            goalCount: allSavingsGoals.count
+        )
+    }
+
+    private struct SnapshotKey: Hashable {
+        let month: Int
+        let year: Int
+        let txCount: Int
+        let txMaxUpdated: Date
+        let acctCount: Int
+        let acctBalanceSum: Decimal
+        let goalCount: Int
     }
 
     /// Composite key for The Read's `task(id:)` so it re-runs when the

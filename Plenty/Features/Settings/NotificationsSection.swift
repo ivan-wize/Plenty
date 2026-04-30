@@ -4,6 +4,14 @@
 //
 //  Target path: Plenty/Features/Settings/NotificationsSection.swift
 //
+//  Phase 2.3 (post-launch v1): the weekly toggle renames to
+//  "The Sunday Read" so the public name is consistent across
+//  Settings, the notification body, and the TheRead.Kind
+//  displayName. "The Read" remains the daily inline content's
+//  name; "The Sunday Read" is the weekly notification.
+//
+//  ----- Earlier history -----
+//
 //  Settings section for notification toggles. Each toggle requests
 //  authorization on first enable; reverts to off if denied. Bill
 //  reminder timing picker (morning/night) shown when bill reminders
@@ -25,7 +33,7 @@ struct NotificationsSection: View {
 
     var body: some View {
         Section {
-            Toggle("Sunday Read", isOn: $weeklyRead)
+            Toggle("The Sunday Read", isOn: $weeklyRead)
                 .onChange(of: weeklyRead) { _, newValue in
                     Task { await applyWeeklyRead(newValue) }
                 }
